@@ -1,4 +1,3 @@
-# Boolean parameter to control whether to move files or just show what would be moved
 param (
     [Parameter(Mandatory = $false)]
     [switch]$move = $false,
