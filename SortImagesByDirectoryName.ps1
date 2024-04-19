@@ -11,12 +11,12 @@ param (
 
 # Define the regular expressions for the different filename formats
 $regexPatterns = @(
-    '_([^_]+?) \(', # matches filenames like S18_Malva_HugePleasure (99).jpg
-    '^.+-(.+?)_', # matches filenames like Irina-TheHomestead_027.jpg
-    '^.+ - (.+?)_', # matches filenames like femjoy_Ariel A - Sway_088.jpg
-    '^(.+?) \(', # matches filenames like Z_Kamila_GenostaNext (102).JPG
-    '-([^_]+?)_', # matches filenames like Katya Clover-Just18_001.jpg
-    '-([^_]+?)-'       # matches filenames like sonja-003-008.jpg
+    '_([^_]+?) \(',     # matches filenames like AB_Model_Serie (99).jpg
+    '^.+-(.+?)_',       # matches filenames like Model-Serie_027.jpg
+    '^.+ - (.+?)_',     # matches filenames like AB_Model A - Serie_088.jpg
+    '^(.+?) \(',        # matches filenames like Z_Model_Serie (102).JPG
+    '-([^_]+?)_',       # matches filenames like Model B-Serie_001.jpg
+    '-([^_]+?)-'        # matches filenames like Model-005-008.jpg
 )
 
 do {
