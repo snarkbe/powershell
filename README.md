@@ -18,4 +18,4 @@ This script organizes files in a directory based on their filenames. It's especi
 Here's an example command:
 
 ```powershell
-.\SortImagesByDirectoryName.ps1 -sourceDir "F:\Temp\nzb\Virginia Sun" -move -loop
+.\SortImagesByDirectoryName.ps1 -sourceDir "F:\TestDir" -move -loop
