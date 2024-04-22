@@ -17,6 +17,7 @@ $regexPatterns = @(
     '^(.+?) \(',        # matches filenames like Z_Model_Serie (102).JPG
     '-([^_]+?)_',       # matches filenames like Model B-Serie_001.jpg
     '-([^_]+?)-'        # matches filenames like Model-005-008.jpg
+    '_([^_]+?)_teenmodeling_tv_'  # matches filenames like clarissa_model_goldbikini_teenmodeling_tv_092.jpg
 )
 
 do {
@@ -92,8 +93,8 @@ do {
 
     # Output the number of files moved to each directory
     $dirFileCount.GetEnumerator() | ForEach-Object {
-        Write-Output ("Directory '{0}' has {1} file(s)." -f $_.Key, $_.Value)
+        Write-Output ("Moved {1} file(s) in directory '{0}'" -f $_.Key, $_.Value)
     }
-    Start-Sleep(3)
+    if ($loop) { Start-Sleep(3) }
 
 } while ($loop)
