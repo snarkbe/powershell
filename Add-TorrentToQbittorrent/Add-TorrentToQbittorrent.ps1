@@ -4,7 +4,7 @@
 .DESCRIPTION
     Ce script prend le chemin d'un fichier .torrent en argument et le téléverse
     vers l'API de qBittorrent spécifiée.
-    Il gère l'authentification par nom d'utilisateur/mot de passe ou par clé API.
+    Il gère l'authentification par nom d'utilisateur/mot de passe.
     À associer aux fichiers .torrent dans l'explorateur Windows.
 .PARAMETER torrent
     Chemin complet vers le fichier .torrent à ajouter. Obligatoire.
@@ -43,7 +43,6 @@ $qbtHost = $config.qbtHost
 $qbtPort = $config.qbtPort
 $qbtUser = $config.qbtUser
 $qbtPassword = $config.qbtPassword
-$qbtApiKey = $config.qbtApiKey
 $useHttps = $config.useHttps
 
 # --- Paramètres d'ajout optionnels (décommentez et ajustez si besoin) ---
@@ -90,7 +89,6 @@ $curlArgs = @(
 # if ($savePath) { $curlArgs += "-F", "savepath=$savePath" }
 # if ($category) { $curlArgs += "-F", "category=$category" }
 # if ($paused)   { $curlArgs += "-F", "paused=$paused" }
-# ... etc ...
 
 # Gérer l'authentification pour curl
 $cookieFile = Join-Path -Path '.' -ChildPath "qbt_cookie.txt" # Fichier temporaire pour le cookie
@@ -98,41 +96,35 @@ $cookieFile = Join-Path -Path '.' -ChildPath "qbt_cookie.txt" # Fichier temporai
 try {
     Write-Host "Tentative d'ajout via curl : $torrent vers $addUrl"
 
-    if ($qbtApiKey) {
-        # Méthode API Key avec curl (-H pour Header)
-        Write-Host "Utilisation de l'authentification par Clé API avec curl."
-        $curlArgs += "-H", "X-Api-Key: $qbtApiKey"
-    } else {
-        # Méthode User/Pass avec curl (obtention du cookie SID)
-        Write-Host "Utilisation de l'authentification par Nom d'utilisateur/Mot de passe avec curl."
-        $loginUrl = "$baseUrl/api/v2/auth/login"
-        $loginData = "username=$($qbtUser)&password=$($qbtPassword)"
+    # Méthode User/Pass avec curl (obtention du cookie SID)
+    Write-Host "Utilisation de l'authentification par Nom d'utilisateur/Mot de passe avec curl."
+    $loginUrl = "$baseUrl/api/v2/auth/login"
+    $loginData = "username=$($qbtUser)&password=$($qbtPassword)"
 
-        # -c $cookieFile : Sauvegarde les cookies reçus dans le fichier
-        # -d : Données POST
-        # --fail : Échoue silencieusement sur erreur HTTP (pour vérifier après)
-        $loginCurlArgs = @(
-             "-s", "--fail",
-             #"-v", # Mode verbeux (pour le débogage, à retirer en production)
-             "-k", # Ignorer les erreurs de certificat SSL (si HTTPS)
-             "-c", "$cookieFile", # Sauvegarder le cookie
-             "--data-binary", "`"$loginData`"", # Envoyer comme data
-             "-H", "`"Content-Type: application/x-www-form-urlencoded`"",
-             "$loginUrl"
-        )
-        # Write-Host "Exécution de curl pour la connexion...: $loginCurlArgs"
-        & $curlExe $loginCurlArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Échec de la connexion curl à qBittorrent (Code: $LASTEXITCODE). Vérifiez URL, user, pass."
-        }
-        # Vérifier si le fichier cookie a été créé et contient quelque chose
-        if (-not (Test-Path $cookieFile) -or (Get-Item $cookieFile).Length -lt 10) {
-             throw "Échec de la connexion à qBittorrent (cookie non reçu/vide)."
-        }
-        Write-Host "Cookie de session obtenu."
-        # -b $cookieFile : Lit les cookies depuis le fichier pour la requête suivante
-        $curlArgs += "-b", $cookieFile
+    # -c $cookieFile : Sauvegarde les cookies reçus dans le fichier
+    # -d : Données POST
+    # --fail : Échoue silencieusement sur erreur HTTP (pour vérifier après)
+    $loginCurlArgs = @(
+            "-s", "--fail",
+            #"-v", # Mode verbeux (pour le débogage, à retirer en production)
+            "-k", # Ignorer les erreurs de certificat SSL (si HTTPS)
+            "-c", "$cookieFile", # Sauvegarder le cookie
+            "--data-binary", "`"$loginData`"", # Envoyer comme data
+            "-H", "`"Content-Type: application/x-www-form-urlencoded`"",
+            "$loginUrl"
+    )
+    # Write-Host "Exécution de curl pour la connexion...: $loginCurlArgs"
+    & $curlExe $loginCurlArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Échec de la connexion curl à qBittorrent (Code: $LASTEXITCODE). Vérifiez URL, user, pass."
     }
+    # Vérifier si le fichier cookie a été créé et contient quelque chose
+    if (-not (Test-Path $cookieFile) -or (Get-Item $cookieFile).Length -lt 10) {
+            throw "Échec de la connexion à qBittorrent (cookie non reçu/vide)."
+    }
+    Write-Host "Cookie de session obtenu."
+    # -b $cookieFile : Lit les cookies depuis le fichier pour la requête suivante
+    $curlArgs += "-b", $cookieFile
 
     # Ajouter l'URL finale aux arguments curl
     $curlArgs += $addUrl
@@ -157,12 +149,8 @@ try {
     exit 1
 } finally {
     # Nettoyer le fichier cookie si User/Pass a été utilisé
-    if (!$qbtApiKey -and (Test-Path $cookieFile)) {
+    if (Test-Path $cookieFile) {
         Remove-Item $cookieFile -ErrorAction SilentlyContinue
     }
-     if ($Host.Name -eq "ConsoleHost" -and $?) { # Si console ET succès
-         Start-Sleep -Seconds 3
-    }
-}
 
 exit 0
