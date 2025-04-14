@@ -1,22 +1,22 @@
 <#
 .SYNOPSIS
-    Ajoute un fichier .torrent à une instance distante de qBittorrent via son API Web.
+    Adds a .torrent file to a remote qBittorrent instance via its Web API.
 .DESCRIPTION
-    Ce script prend le chemin d'un fichier .torrent en argument et le téléverse
-    vers l'API de qBittorrent spécifiée.
-    Il gère l'authentification par nom d'utilisateur/mot de passe.
-    À associer aux fichiers .torrent dans l'explorateur Windows.
+    This script takes the path of a .torrent file as an argument and uploads it
+    to the specified qBittorrent API.
+    It handles authentication via username/password.
+    To be associated with .torrent files in Windows Explorer.
 .PARAMETER torrent
-    Chemin complet vers le fichier .torrent à ajouter. Obligatoire.
+    Full path to the .torrent file to be added. Required.
 .EXAMPLE
-    .\Add-TorrentToQbittorrent.ps1 -torrent "C:\Downloads\mon_fichier.torrent"
+    .\Add-TorrentToQbittorrent.ps1 -torrent "C:\Downloads\my_file.torrent"
 .EXAMPLE
-    # Via l'association de fichier (Windows passe le chemin en argument)
+    # Via file association (Windows passes the path as an argument)
     powershell.exe -ExecutionPolicy Bypass -File "C:\Scripts\Add-TorrentToQbittorrent.ps1" "%1"
 .NOTES
-    Auteur     : Gilles Reichert
-    Date       : 2025-04-13
-    Version API: qBittorrent Web API v2
+    Author    : Gilles Reichert
+    Date      : 2025-04-13
+    API Version: qBittorrent Web API v2
 #>
 param(
     [Parameter(Mandatory=$true, Position=0)]
@@ -27,14 +27,14 @@ param(
 $configFilePath = Join-Path -Path $PSScriptRoot -ChildPath "qBittorrentConfig.json"
 
 if (-not (Test-Path $configFilePath)) {
-    Write-Error "Erreur : Fichier de configuration introuvable à '$configFilePath'."
+    Write-Error "Error: Configuration file not found at '$configFilePath'."
     exit 1
 }
 
 try {
     $config = Get-Content -Path $configFilePath | ConvertFrom-Json
 } catch {
-    Write-Error "Erreur : Impossible de lire ou de parser le fichier de configuration. $_"
+    Write-Error "Error: Unable to read or parse the configuration file. $_"
     exit 1
 }
 
@@ -45,110 +45,110 @@ $qbtUser = $config.qbtUser
 $qbtPassword = $config.qbtPassword
 $useHttps = $config.useHttps
 
-# --- Paramètres d'ajout optionnels (décommentez et ajustez si besoin) ---
-# $savePath = "D:\Torrents\Terminés"   # Chemin de sauvegarde sur la machine qBittorrent
-# $category = "Films"                 # Catégorie à assigner
-# $paused = "false"                   # Ajouter en pause ? "true" ou "false" (chaîne de caractères)
-# $sequential = "false"               # Téléchargement séquentiel ? "true" ou "false"
-# $firstLastPiecePrio = "false"       # Prioriser première/dernière pièce ? "true" ou "false"
+# --- Optional parameters (uncomment and adjust if needed) ---
+# $savePath = "D:\Torrents\Completed"   # Save path on the qBittorrent machine
+# $category = "Movies"                 # Category to assign
+# $paused = "false"                    # Add paused? "true" or "false" (string)
+# $sequential = "false"                # Sequential download? "true" or "false"
+# $firstLastPiecePrio = "false"        # Prioritize first/last piece? "true" or "false"
 
-# --- Logique du Script ---
+# --- Script Logic ---
 
-# Validation simple du fichier
+# Basic file validation
 if (-not (Test-Path $torrent -PathType Leaf)) {
-    Write-Error "Erreur : Fichier torrent introuvable à '$torrent'"
-    # Pause pour voir l'erreur si lancé par double-clic
-    if ($Host.Name -eq "ConsoleHost") { Read-Host "Appuyez sur Entrée pour quitter" }
+    Write-Error "Error: Torrent file not found at '$torrent'"
+    # Pause to see the error if launched by double-click
+    if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to exit" }
     exit 1
 }
 if ($torrent -notlike "*.torrent") {
-    Write-Warning "Attention : Le fichier '$torrent' ne semble pas être un fichier .torrent."
-    # On continue quand même au cas où...
+    Write-Warning "Warning: The file '$torrent' does not appear to be a .torrent file."
+    # Continue anyway just in case...
 }
 
-# Construction de l'URL de base
+# Building the base URL
 $protocol = if ($useHttps) { "https" } else { "http" }
 $baseUrl = "${protocol}://$qbtHost`:$qbtPort"
 $addUrl = "$baseUrl/api/v2/torrents/add"
 
-# Chemin vers curl (généralement dans le PATH sur Windows 10+)
+# Path to curl (usually in PATH on Windows 10+)
 $curlExe = "curl.exe"
 
-# Préparer les arguments pour curl
+# Prepare curl arguments
 $curlArgs = @(
-    "-s", "-S" # Mode silencieux mais affiche les erreurs
-    "--fail", # Échoue silencieusement sur erreur HTTP
-    #"-v", # Mode verbeux (pour le débogage, à retirer en production)
-    "-k", # Ignorer les erreurs de certificat SSL (si HTTPS)
-    # Option -F pour multipart/form-data: 'nom_champ=@chemin_fichier;type=mime_type'
-    # Assurez-vous que le chemin est bien quoté s'il contient des espaces
+    "-s", "-S" # Silent mode but displays errors
+    "--fail", # Fails silently on HTTP error
+    #"-v", # Verbose mode (for debugging, remove in production)
+    "-k", # Ignore SSL certificate errors (if HTTPS)
+    # -F option for multipart/form-data: 'field_name=@file_path;type=mime_type'
+    # Make sure the path is properly quoted if it contains spaces
     "-F", "torrents=@`"$torrent`";type=application/x-bittorrent"
 )
 
-# Ajouter les paramètres optionnels (si configurés)
+# Add optional parameters (if configured)
 # if ($savePath) { $curlArgs += "-F", "savepath=$savePath" }
 # if ($category) { $curlArgs += "-F", "category=$category" }
 # if ($paused)   { $curlArgs += "-F", "paused=$paused" }
 
-# Gérer l'authentification pour curl
-$cookieFile = Join-Path -Path '.' -ChildPath "qbt_cookie.txt" # Fichier temporaire pour le cookie
+# Handle authentication for curl
+$cookieFile = Join-Path -Path '.' -ChildPath "qbt_cookie.txt" # Temporary file for the cookie
 
 try {
-    Write-Host "Tentative d'ajout via curl : $torrent vers $addUrl"
+    Write-Host "Attempting to add via curl: $torrent to $addUrl"
 
-    # Méthode User/Pass avec curl (obtention du cookie SID)
-    Write-Host "Utilisation de l'authentification par Nom d'utilisateur/Mot de passe avec curl."
+    # User/Pass method with curl (obtaining the SID cookie)
+    Write-Host "Using Username/Password authentication with curl."
     $loginUrl = "$baseUrl/api/v2/auth/login"
     $loginData = "username=$($qbtUser)&password=$($qbtPassword)"
 
-    # -c $cookieFile : Sauvegarde les cookies reçus dans le fichier
-    # -d : Données POST
-    # --fail : Échoue silencieusement sur erreur HTTP (pour vérifier après)
+    # -c $cookieFile : Save received cookies in the file
+    # -d : POST data
+    # --fail : Fails silently on HTTP error (to check afterward)
     $loginCurlArgs = @(
             "-s", "--fail",
-            #"-v", # Mode verbeux (pour le débogage, à retirer en production)
-            "-k", # Ignorer les erreurs de certificat SSL (si HTTPS)
-            "-c", "$cookieFile", # Sauvegarder le cookie
-            "--data-binary", "`"$loginData`"", # Envoyer comme data
+            #"-v", # Verbose mode (for debugging, remove in production)
+            "-k", # Ignore SSL certificate errors (if HTTPS)
+            "-c", "$cookieFile", # Save the cookie
+            "--data-binary", "`"$loginData`"", # Send as data
             "-H", "`"Content-Type: application/x-www-form-urlencoded`"",
             "$loginUrl"
     )
-    # Write-Host "Exécution de curl pour la connexion...: $loginCurlArgs"
+    # Write-Host "Executing curl for login...: $loginCurlArgs"
     & $curlExe $loginCurlArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "Échec de la connexion curl à qBittorrent (Code: $LASTEXITCODE). Vérifiez URL, user, pass."
+        throw "Failed curl login to qBittorrent (Code: $LASTEXITCODE). Check URL, user, pass."
     }
-    # Vérifier si le fichier cookie a été créé et contient quelque chose
+    # Check if the cookie file was created and contains something
     if (-not (Test-Path $cookieFile) -or (Get-Item $cookieFile).Length -lt 10) {
-            throw "Échec de la connexion à qBittorrent (cookie non reçu/vide)."
+            throw "Failed to connect to qBittorrent (cookie not received/empty)."
     }
-    Write-Host "Cookie de session obtenu."
-    # -b $cookieFile : Lit les cookies depuis le fichier pour la requête suivante
+    Write-Host "Session cookie obtained."
+    # -b $cookieFile : Read cookies from the file for the next request
     $curlArgs += "-b", $cookieFile
 
-    # Ajouter l'URL finale aux arguments curl
+    # Add the final URL to curl arguments
     $curlArgs += $addUrl
 
-    # Exécuter la commande curl pour l'upload
-    Write-Host "Exécution de curl pour l'upload..."
-    # Write-Host "$curlExe $($curlArgs -join ' ')" # Décommentez pour voir la commande curl complète
-    $uploadOutput = & $curlExe $curlArgs 2>&1 # Redirige stderr vers stdout pour capturer les erreurs curl
+    # Execute the curl command for upload
+    Write-Host "Executing curl for upload..."
+    # Write-Host "$curlExe $($curlArgs -join ' ')" # Uncomment to see the complete curl command
+    $uploadOutput = & $curlExe $curlArgs 2>&1 # Redirect stderr to stdout to capture curl errors
     $curlExitCode = $LASTEXITCODE
 
-    # Vérifier le résultat
+    # Check the result
     if ($curlExitCode -eq 0 -and $uploadOutput -match "Ok.") {
-         Write-Host "Succès (via curl) : Torrent '$([System.IO.Path]::GetFileName($torrent))' ajouté à qBittorrent."
+         Write-Host "Success (via curl): Torrent '$([System.IO.Path]::GetFileName($torrent))' added to qBittorrent."
     } else {
-        throw "Échec de l'upload curl. Code: $curlExitCode. Sortie: $uploadOutput"
+        throw "Failed curl upload. Code: $curlExitCode. Output: $uploadOutput"
     }
 
 } catch {
-    Write-Error "Une erreur est survenue : $($_.Exception.Message)"
-    # Pause pour voir l'erreur si lancé par double-clic
-    if ($Host.Name -eq "ConsoleHost") { Read-Host "Appuyez sur Entrée pour quitter" }
+    Write-Error "An error occurred: $($_.Exception.Message)"
+    # Pause to see the error if launched by double-click
+    if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to exit" }
     exit 1
 } finally {
-    # Nettoyer le fichier cookie si User/Pass a été utilisé
+    # Clean up the cookie file if User/Pass was used
     if (Test-Path $cookieFile) {
         Remove-Item $cookieFile -ErrorAction SilentlyContinue
     }
