@@ -1,0 +1,8 @@
+# Ignore actual configuration file with sensitive data
+qBittorrentConfig.json
+
+# Ignore temporary files
+qbt_cookie.txt
+
+# Don't ignore the sample configuration
+!qBittorrentConfig.sample.json
