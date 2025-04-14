@@ -152,5 +152,5 @@ try {
     if (Test-Path $cookieFile) {
         Remove-Item $cookieFile -ErrorAction SilentlyContinue
     }
-
+}
 exit 0
