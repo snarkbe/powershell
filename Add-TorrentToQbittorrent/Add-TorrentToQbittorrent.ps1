@@ -3,26 +3,24 @@
     Ajoute un fichier .torrent à une instance distante de qBittorrent via son API Web.
 .DESCRIPTION
     Ce script prend le chemin d'un fichier .torrent en argument et le téléverse
-    vers l'API de qBittorrent spécifiée (par défaut sur 'optiplex:8080').
+    vers l'API de qBittorrent spécifiée.
     Il gère l'authentification par nom d'utilisateur/mot de passe ou par clé API.
     À associer aux fichiers .torrent dans l'explorateur Windows.
-.PARAMETER TorrentFilePath
+.PARAMETER torrent
     Chemin complet vers le fichier .torrent à ajouter. Obligatoire.
 .EXAMPLE
-    .\Add-TorrentToQbittorrent.ps1 -TorrentFilePath "C:\Downloads\mon_fichier.torrent"
+    .\Add-TorrentToQbittorrent.ps1 -torrent "C:\Downloads\mon_fichier.torrent"
 .EXAMPLE
     # Via l'association de fichier (Windows passe le chemin en argument)
     powershell.exe -ExecutionPolicy Bypass -File "C:\Scripts\Add-TorrentToQbittorrent.ps1" "%1"
 .NOTES
-    Auteur     : Gemini
+    Auteur     : Gilles Reichert
     Date       : 2025-04-13
     Version API: qBittorrent Web API v2
-    Sécurité   : Stocker le mot de passe en clair dans le script est un risque.
-                 Envisagez d'utiliser une clé API ou le gestionnaire d'informations d'identification Windows.
 #>
 param(
     [Parameter(Mandatory=$true, Position=0)]
-    [string]$TorrentFilePath
+    [string]$torrent
 )
 
 # Load configuration from JSON file
@@ -58,14 +56,14 @@ $useHttps = $config.useHttps
 # --- Logique du Script ---
 
 # Validation simple du fichier
-if (-not (Test-Path $TorrentFilePath -PathType Leaf)) {
-    Write-Error "Erreur : Fichier torrent introuvable à '$TorrentFilePath'"
+if (-not (Test-Path $torrent -PathType Leaf)) {
+    Write-Error "Erreur : Fichier torrent introuvable à '$torrent'"
     # Pause pour voir l'erreur si lancé par double-clic
     if ($Host.Name -eq "ConsoleHost") { Read-Host "Appuyez sur Entrée pour quitter" }
     exit 1
 }
-if ($TorrentFilePath -notlike "*.torrent") {
-    Write-Warning "Attention : Le fichier '$TorrentFilePath' ne semble pas être un fichier .torrent."
+if ($torrent -notlike "*.torrent") {
+    Write-Warning "Attention : Le fichier '$torrent' ne semble pas être un fichier .torrent."
     # On continue quand même au cas où...
 }
 
@@ -85,7 +83,7 @@ $curlArgs = @(
     "-k", # Ignorer les erreurs de certificat SSL (si HTTPS)
     # Option -F pour multipart/form-data: 'nom_champ=@chemin_fichier;type=mime_type'
     # Assurez-vous que le chemin est bien quoté s'il contient des espaces
-    "-F", "torrents=@`"$TorrentFilePath`";type=application/x-bittorrent"
+    "-F", "torrents=@`"$torrent`";type=application/x-bittorrent"
 )
 
 # Ajouter les paramètres optionnels (si configurés)
@@ -98,7 +96,7 @@ $curlArgs = @(
 $cookieFile = Join-Path -Path '.' -ChildPath "qbt_cookie.txt" # Fichier temporaire pour le cookie
 
 try {
-    Write-Host "Tentative d'ajout via curl : $TorrentFilePath vers $addUrl"
+    Write-Host "Tentative d'ajout via curl : $torrent vers $addUrl"
 
     if ($qbtApiKey) {
         # Méthode API Key avec curl (-H pour Header)
@@ -147,7 +145,7 @@ try {
 
     # Vérifier le résultat
     if ($curlExitCode -eq 0 -and $uploadOutput -match "Ok.") {
-         Write-Host "Succès (via curl) : Torrent '$([System.IO.Path]::GetFileName($TorrentFilePath))' ajouté à qBittorrent."
+         Write-Host "Succès (via curl) : Torrent '$([System.IO.Path]::GetFileName($torrent))' ajouté à qBittorrent."
     } else {
         throw "Échec de l'upload curl. Code: $curlExitCode. Sortie: $uploadOutput"
     }
