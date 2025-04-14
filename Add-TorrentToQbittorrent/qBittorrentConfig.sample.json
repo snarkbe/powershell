@@ -1,0 +1,8 @@
+{
+    "qbtHost": "example-host",
+    "qbtPort": 8080,
+    "qbtUser": "your-username",
+    "qbtPassword": "your-password",
+    "qbtApiKey": "your-api-key",
+    "useHttps": false
+}
