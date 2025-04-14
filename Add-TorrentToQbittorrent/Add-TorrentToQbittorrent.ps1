@@ -90,12 +90,13 @@ $curlArgs = @(
 # if ($category) { $curlArgs += "-F", "category=$category" }
 # if ($paused)   { $curlArgs += "-F", "paused=$paused" }
 
-# Handle authentication for curl
-$cookieFile = Join-Path -Path '.' -ChildPath "qbt_cookie.txt" # Temporary file for the cookie
+# Handle authentication for curl - create a random named temporary cookie file
+$tempFileName = "qbt_cookie_" + [System.Guid]::NewGuid().ToString() + ".txt"
+$cookieFile = Join-Path -Path $env:TEMP -ChildPath $tempFileName
 
 try {
     Write-Host "Attempting to add via curl: $torrent to $addUrl"
-
+    
     # User/Pass method with curl (obtaining the SID cookie)
     Write-Host "Using Username/Password authentication with curl."
     $loginUrl = "$baseUrl/api/v2/auth/login"
