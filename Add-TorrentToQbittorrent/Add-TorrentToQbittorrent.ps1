@@ -18,9 +18,25 @@
     Date      : 2025-04-13
     API Version: qBittorrent Web API v2
 #>
+
 param(
-    [Parameter(Mandatory=$true, Position=0)]
-    [string]$torrent
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$torrent,
+
+    [Parameter(Mandatory = $false)]
+    [string]$savePath, # Save path on the qBittorrent machine
+
+    [Parameter(Mandatory = $false)]
+    [string]$category, # Category to assign
+
+    [Parameter(Mandatory = $false)]
+    [switch]$paused,              # Add paused? Switch; true if present, false otherwise
+
+    [Parameter(Mandatory = $false)]
+    [switch]$sequential,          # Sequential download? Switch; true if present, false otherwise
+
+    [Parameter(Mandatory = $false)]
+    [switch]$firstLastPiecePrio   # Prioritize first/last piece? Switch; true if present, false otherwise
 )
 
 # Load configuration from JSON file
@@ -33,7 +49,8 @@ if (-not (Test-Path $configFilePath)) {
 
 try {
     $config = Get-Content -Path $configFilePath | ConvertFrom-Json
-} catch {
+}
+catch {
     Write-Error "Error: Unable to read or parse the configuration file. $_"
     exit 1
 }
@@ -86,9 +103,19 @@ $curlArgs = @(
 )
 
 # Add optional parameters (if configured)
-# if ($savePath) { $curlArgs += "-F", "savepath=$savePath" }
-# if ($category) { $curlArgs += "-F", "category=$category" }
-# if ($paused)   { $curlArgs += "-F", "paused=$paused" }
+if ($savePath) { 
+    $curlArgs += "-F"
+    $curlArgs += "savepath=$savePath"
+}
+if ($category) { 
+    $curlArgs += "-F"
+    $curlArgs += "category=$category"
+}
+
+# For switch parameters, always attach with explicit true/false value.
+$curlArgs += "-F", "paused=" + ($paused ? "true" : "false")
+$curlArgs += "-F", "sequentialDownload=" + ($sequential ? "true" : "false")
+$curlArgs += "-F", "firstLastPiecePrio=" + ($firstLastPiecePrio ? "true" : "false")
 
 # Handle authentication for curl - create a random named temporary cookie file
 $tempFileName = "qbt_cookie_" + [System.Guid]::NewGuid().ToString() + ".txt"
@@ -106,13 +133,13 @@ try {
     # -d : POST data
     # --fail : Fails silently on HTTP error (to check afterward)
     $loginCurlArgs = @(
-            "-s", "--fail",
-            #"-v", # Verbose mode (for debugging, remove in production)
-            "-k", # Ignore SSL certificate errors (if HTTPS)
-            "-c", "$cookieFile", # Save the cookie
-            "--data-binary", "`"$loginData`"", # Send as data
-            "-H", "`"Content-Type: application/x-www-form-urlencoded`"",
-            "$loginUrl"
+        "-s", "--fail",
+        #"-v", # Verbose mode (for debugging, remove in production)
+        "-k", # Ignore SSL certificate errors (if HTTPS)
+        "-c", "$cookieFile", # Save the cookie
+        "--data-binary", "`"$loginData`"", # Send as data
+        "-H", "`"Content-Type: application/x-www-form-urlencoded`"",
+        "$loginUrl"
     )
     # Write-Host "Executing curl for login...: $loginCurlArgs"
     & $curlExe $loginCurlArgs
@@ -121,7 +148,7 @@ try {
     }
     # Check if the cookie file was created and contains something
     if (-not (Test-Path $cookieFile) -or (Get-Item $cookieFile).Length -lt 10) {
-            throw "Failed to connect to qBittorrent (cookie not received/empty)."
+        throw "Failed to connect to qBittorrent (cookie not received/empty)."
     }
     Write-Host "Session cookie obtained."
     # -b $cookieFile : Read cookies from the file for the next request
@@ -138,17 +165,20 @@ try {
 
     # Check the result
     if ($curlExitCode -eq 0 -and $uploadOutput -match "Ok.") {
-         Write-Host "Success (via curl): Torrent '$([System.IO.Path]::GetFileName($torrent))' added to qBittorrent."
-    } else {
+        Write-Host "Success (via curl): Torrent '$([System.IO.Path]::GetFileName($torrent))' added to qBittorrent."
+    }
+    else {
         throw "Failed curl upload. Code: $curlExitCode. Output: $uploadOutput"
     }
 
-} catch {
+}
+catch {
     Write-Error "An error occurred: $($_.Exception.Message)"
     # Pause to see the error if launched by double-click
     if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to exit" }
     exit 1
-} finally {
+}
+finally {
     # Clean up the cookie file if User/Pass was used
     if (Test-Path $cookieFile) {
         Remove-Item $cookieFile -ErrorAction SilentlyContinue
