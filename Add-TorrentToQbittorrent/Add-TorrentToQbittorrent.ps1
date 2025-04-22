@@ -61,6 +61,7 @@ $qbtPort = $config.qbtPort
 $qbtUser = $config.qbtUser
 $qbtPassword = $config.qbtPassword
 $useHttps = $config.useHttps
+$ignoreCert = $config.ignoreCert
 
 # --- Optional parameters (uncomment and adjust if needed) ---
 # $savePath = "D:\Torrents\Completed"   # Save path on the qBittorrent machine
@@ -95,12 +96,11 @@ $curlExe = "curl.exe"
 $curlArgs = @(
     "-s", "-S" # Silent mode but displays errors
     "--fail", # Fails silently on HTTP error
-    #"-v", # Verbose mode (for debugging, remove in production)
-    "-k", # Ignore SSL certificate errors (if HTTPS)
     # -F option for multipart/form-data: 'field_name=@file_path;type=mime_type'
     # Make sure the path is properly quoted if it contains spaces
     "-F", "torrents=@`"$torrent`";type=application/x-bittorrent"
 )
+if ($ignoreCert) { $curlArgs += "-k" } # Ignore SSL certificate errors (if HTTPS)
 
 # Add optional parameters (if configured)
 if ($savePath) { 
@@ -129,19 +129,18 @@ try {
     $loginUrl = "$baseUrl/api/v2/auth/login"
     $loginData = "username=$($qbtUser)&password=$($qbtPassword)"
 
-    # -c $cookieFile : Save received cookies in the file
-    # -d : POST data
-    # --fail : Fails silently on HTTP error (to check afterward)
+    # Prepare curl arguments for login request
     $loginCurlArgs = @(
-        "-s", "--fail",
-        #"-v", # Verbose mode (for debugging, remove in production)
-        "-k", # Ignore SSL certificate errors (if HTTPS)
+        "-s", "--fail" # Silent mode but fails on HTTP error
+    )
+    if ($ignoreCert) { $loginCurlArgs += "-k" } # Ignore SSL certificate errors (if HTTPS)
+    $loginCurlArgs += @(
         "-c", "$cookieFile", # Save the cookie
         "--data-binary", "`"$loginData`"", # Send as data
         "-H", "`"Content-Type: application/x-www-form-urlencoded`"",
         "$loginUrl"
     )
-    # Write-Host "Executing curl for login...: $loginCurlArgs"
+    Write-Debug "Executing curl for login...: $loginCurlArgs"
     & $curlExe $loginCurlArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Failed curl login to qBittorrent (Code: $LASTEXITCODE). Check URL, user, pass."
