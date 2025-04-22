@@ -3,5 +3,6 @@
     "qbtPort": 8080,
     "qbtUser": "your-username",
     "qbtPassword": "your-password",
-    "useHttps": false
+    "useHttps": false,
+    "ignoreCert": false
 }
