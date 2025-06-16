@@ -165,6 +165,15 @@ try {
     # Check the result
     if ($curlExitCode -eq 0 -and $uploadOutput -match "Ok.") {
         Write-Host "Success (via curl): Torrent '$([System.IO.Path]::GetFileName($torrent))' added to qBittorrent."
+        
+        # Delete the torrent file after successful addition
+        try {
+            Remove-Item -Path $torrent -Force -ErrorAction Stop
+            Write-Host "Torrent file successfully deleted: '$torrent'"
+        }
+        catch {
+            Write-Warning "Torrent added successfully, but could not delete the torrent file: $($_.Exception.Message)"
+        }
     }
     else {
         throw "Failed curl upload. Code: $curlExitCode. Output: $uploadOutput"
