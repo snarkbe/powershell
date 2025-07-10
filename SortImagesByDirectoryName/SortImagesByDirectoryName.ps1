@@ -1,13 +1,64 @@
-param (
+param(
+    # Support for Send To context menu (single folder path)
+    [Parameter(ValueFromRemainingArguments = $true, Position = 0)]
+    [string[]]$InputPaths,
+    
+    # Support for command-line usage
     [Parameter(Mandatory = $false)]
     [switch]$move = $false,
 
     [Parameter(Mandatory = $false)]
-    [string]$sourceDir = (Get-Location).Path,
+    [string]$sourceDir = "",
 
     [Parameter(Mandatory = $false)]
-    [switch]$loop
+    [switch]$loop,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$gui
 )
+
+# Determine if running from Send To or command line
+$isSendTo = $false
+$actualSourceDir = ""
+
+if ($InputPaths -and $InputPaths.Count -gt 0) {
+    # Called from Send To context menu
+    $isSendTo = $true
+    
+    # Add Windows Forms assembly for message boxes when using Send To
+    Add-Type -AssemblyName PresentationFramework
+    
+    # Ensure only one item is selected
+    if ($InputPaths.Count -ne 1) {
+        [System.Windows.MessageBox]::Show("Please select only one folder.", "Error")
+        exit 1
+    }
+    
+    $actualSourceDir = $InputPaths[0]
+    
+    # Check if the path is a folder
+    if (-not (Test-Path $actualSourceDir -PathType Container)) {
+        [System.Windows.MessageBox]::Show("Selected item is not a folder.", "Error")
+        exit 1
+    }
+    
+    # For Send To, always move files
+    $move = $true
+    $loop = $false
+} else {
+    # Called from command line
+    if ($sourceDir -eq "") {
+        $actualSourceDir = (Get-Location).Path
+    } else {
+        $actualSourceDir = $sourceDir
+    }
+    
+    # Check if the directory exists
+    if (-not (Test-Path $actualSourceDir -PathType Container)) {
+        Write-Host "Directory does not exist: $actualSourceDir" -ForegroundColor Red
+        exit 1
+    }
+}
 
 # Define the regular expressions for the different filename formats
 $regexPatterns = @(
@@ -26,10 +77,10 @@ do {
     $dirFileCount = @{}
 
     # Get all the files in the directory
-    $allFiles = Get-ChildItem -Path $sourceDir -File
+    $allFiles = Get-ChildItem -Path $actualSourceDir -File
 
     # Filter the files to include only images
-    $files = $allFiles | Where-Object { $_.Extension -match ".jpg|.png|.gif|.JPG" }
+    $files = $allFiles | Where-Object { $_.Extension -match "(?i)\.jpg|\.jpeg|\.png|\.gif" }
 
     # If there are no files to process, break the loop
     if ($files.Count -eq 0) {
@@ -66,7 +117,7 @@ do {
         }
 
         # Create the directory path
-        $dirPath = Join-Path -Path $sourceDir -ChildPath $dirName
+        $dirPath = Join-Path -Path $actualSourceDir -ChildPath $dirName
 
         # Create the directory if it doesn't exist and $move is true
         if ($move -and !(Test-Path -Path $dirPath)) {
