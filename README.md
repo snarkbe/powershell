@@ -21,12 +21,6 @@ A collection of PowerShell scripts for automation, file management, torrent hand
   - Loads your NordVPN token from a `.env` file (never hardcoded).
   - See [`GetNordVPNkey/README.md`](./GetNordVPNkey/README.md)
 
-- **qBitEnv.ps1**
-  - (Script purpose not documented; see script for details.)
-
-- **VideoRenamer.ps1**
-  - (Script purpose not documented; see script for details.)
-
 ## General Usage
 
 - Each script is self-contained and can be run directly in PowerShell.
