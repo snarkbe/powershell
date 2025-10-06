@@ -55,7 +55,7 @@ catch {
     exit 1
 }
 
-# Assign configuration values
+# Assign configuration values with validation
 $qbtHost = $config.qbtHost
 $qbtPort = $config.qbtPort
 $qbtUser = $config.qbtUser
@@ -63,12 +63,23 @@ $qbtPassword = $config.qbtPassword
 $useHttps = $config.useHttps
 $ignoreCert = $config.ignoreCert
 
-# --- Optional parameters (uncomment and adjust if needed) ---
-# $savePath = "D:\Torrents\Completed"   # Save path on the qBittorrent machine
-# $category = "Movies"                 # Category to assign
-# $paused = "false"                    # Add paused? "true" or "false" (string)
-# $sequential = "false"                # Sequential download? "true" or "false"
-# $firstLastPiecePrio = "false"        # Prioritize first/last piece? "true" or "false"
+# Validate required configuration values
+if ([string]::IsNullOrWhiteSpace($qbtHost)) {
+    Write-Error "Error: 'qbtHost' is not configured in the configuration file."
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace($qbtUser)) {
+    Write-Error "Error: 'qbtUser' is not configured in the configuration file."
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace($qbtPassword)) {
+    Write-Error "Error: 'qbtPassword' is not configured in the configuration file."
+    exit 1
+}
+if ($qbtPort -le 0 -or $qbtPort -gt 65535) {
+    Write-Error "Error: 'qbtPort' must be a valid port number (1-65535). Current value: $qbtPort"
+    exit 1
+}
 
 # --- Script Logic ---
 
@@ -84,13 +95,25 @@ if ($torrent -notlike "*.torrent") {
     # Continue anyway just in case...
 }
 
+# Path to curl (usually in PATH on Windows 10+)
+$curlExe = "curl.exe"
+
+# Check if curl.exe is available
+try {
+    $null = Get-Command $curlExe -ErrorAction Stop
+}
+catch {
+    Write-Error "Error: curl.exe is not found in PATH. Please ensure curl is installed (included in Windows 10+)."
+    if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to exit" }
+    exit 1
+}
+
 # Building the base URL
 $protocol = if ($useHttps) { "https" } else { "http" }
 $baseUrl = "${protocol}://$qbtHost`:$qbtPort"
 $addUrl = "$baseUrl/api/v2/torrents/add"
 
-# Path to curl (usually in PATH on Windows 10+)
-$curlExe = "curl.exe"
+
 
 # Prepare curl arguments
 $curlArgs = @(
@@ -112,22 +135,39 @@ if ($category) {
     $curlArgs += "category=$category"
 }
 
-# For switch parameters, always attach with explicit true/false value.
-$curlArgs += "-F", "paused=" + ($paused ? "true" : "false")
-$curlArgs += "-F", "sequentialDownload=" + ($sequential ? "true" : "false")
-$curlArgs += "-F", "firstLastPiecePrio=" + ($firstLastPiecePrio ? "true" : "false")
+# For switch parameters, always attach with explicit true/false value (PS 5.1 compatible)
+if ($paused) {
+    $curlArgs += "-F", "paused=true"
+} else {
+    $curlArgs += "-F", "paused=false"
+}
+if ($sequential) {
+    $curlArgs += "-F", "sequentialDownload=true"
+} else {
+    $curlArgs += "-F", "sequentialDownload=false"
+}
+if ($firstLastPiecePrio) {
+    $curlArgs += "-F", "firstLastPiecePrio=true"
+} else {
+    $curlArgs += "-F", "firstLastPiecePrio=false"
+}
 
 # Handle authentication for curl - create a random named temporary cookie file
 $tempFileName = "qbt_cookie_" + [System.Guid]::NewGuid().ToString() + ".txt"
 $cookieFile = Join-Path -Path $env:TEMP -ChildPath $tempFileName
 
 try {
-    Write-Host "Attempting to add via curl: $torrent to $addUrl"
+    Write-Host "Attempting to add torrent: '$([System.IO.Path]::GetFileName($torrent))' to $addUrl"
     
     # User/Pass method with curl (obtaining the SID cookie)
-    Write-Host "Using Username/Password authentication with curl."
+    Write-Verbose "Using Username/Password authentication with curl."
     $loginUrl = "$baseUrl/api/v2/auth/login"
-    $loginData = "username=$($qbtUser)&password=$($qbtPassword)"
+    
+    # URL encode username and password to handle special characters
+    Add-Type -AssemblyName System.Web
+    $encodedUser = [System.Web.HttpUtility]::UrlEncode($qbtUser)
+    $encodedPass = [System.Web.HttpUtility]::UrlEncode($qbtPassword)
+    $loginData = "username=$encodedUser&password=$encodedPass"
 
     # Prepare curl arguments for login request
     $loginCurlArgs = @(
@@ -140,16 +180,16 @@ try {
         "-H", "`"Content-Type: application/x-www-form-urlencoded`"",
         "$loginUrl"
     )
-    Write-Debug "Executing curl for login...: $loginCurlArgs"
+    Write-Verbose "Executing curl for login to: $loginUrl"
     & $curlExe $loginCurlArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed curl login to qBittorrent (Code: $LASTEXITCODE). Check URL, user, pass."
+    throw "Failed to authenticate with qBittorrent (Exit Code: $LASTEXITCODE). Please verify the host (${qbtHost}:${qbtPort}), username, and password in the configuration file."
     }
     # Check if the cookie file was created and contains something
     if (-not (Test-Path $cookieFile) -or (Get-Item $cookieFile).Length -lt 10) {
-        throw "Failed to connect to qBittorrent (cookie not received/empty)."
+        throw "Failed to obtain authentication cookie from qBittorrent. The server may be unreachable or credentials may be invalid."
     }
-    Write-Host "Session cookie obtained."
+    Write-Verbose "Session cookie obtained successfully."
     # -b $cookieFile : Read cookies from the file for the next request
     $curlArgs += "-b", $cookieFile
 
@@ -157,26 +197,33 @@ try {
     $curlArgs += $addUrl
 
     # Execute the curl command for upload
-    Write-Host "Executing curl for upload..."
-    # Write-Host "$curlExe $($curlArgs -join ' ')" # Uncomment to see the complete curl command
+    Write-Verbose "Uploading torrent file to qBittorrent..."
+    Write-Verbose "Upload URL: $addUrl"
+    if ($savePath) { Write-Verbose "Save path: $savePath" }
+    if ($category) { Write-Verbose "Category: $category" }
+    Write-Verbose "Options: Paused=$paused, Sequential=$sequential, FirstLastPiecePrio=$firstLastPiecePrio"
+    
     $uploadOutput = & $curlExe $curlArgs 2>&1 # Redirect stderr to stdout to capture curl errors
     $curlExitCode = $LASTEXITCODE
 
     # Check the result
     if ($curlExitCode -eq 0 -and $uploadOutput -match "Ok.") {
-        Write-Host "Success (via curl): Torrent '$([System.IO.Path]::GetFileName($torrent))' added to qBittorrent."
+        Write-Host "Success: Torrent '$([System.IO.Path]::GetFileName($torrent))' successfully added to qBittorrent." -ForegroundColor Green
         
         # Delete the torrent file after successful addition
         try {
             Remove-Item -Path $torrent -Force -ErrorAction Stop
-            Write-Host "Torrent file successfully deleted: '$torrent'"
+            Write-Verbose "Torrent file deleted: '$torrent'"
         }
         catch {
             Write-Warning "Torrent added successfully, but could not delete the torrent file: $($_.Exception.Message)"
         }
     }
+    elseif ($curlExitCode -eq 0) {
+        throw "Upload completed but qBittorrent returned unexpected response. Output: $uploadOutput`nThis may indicate the torrent was already added or there was a server-side error."
+    }
     else {
-        throw "Failed curl upload. Code: $curlExitCode. Output: $uploadOutput"
+        throw "Failed to upload torrent file (Exit Code: $curlExitCode). Server response: $uploadOutput`nPlease check network connectivity and qBittorrent server status."
     }
 
 }
