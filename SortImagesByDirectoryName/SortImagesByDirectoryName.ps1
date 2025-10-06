@@ -11,19 +11,14 @@ param(
     [string]$sourceDir = "",
 
     [Parameter(Mandatory = $false)]
-    [switch]$loop,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$gui
+    [switch]$loop
 )
 
 # Determine if running from Send To or command line
-$isSendTo = $false
 $actualSourceDir = ""
 
 if ($InputPaths -and $InputPaths.Count -gt 0) {
     # Called from Send To context menu
-    $isSendTo = $true
     
     # Add Windows Forms assembly for message boxes when using Send To
     Add-Type -AssemblyName PresentationFramework
@@ -62,14 +57,17 @@ if ($InputPaths -and $InputPaths.Count -gt 0) {
 
 # Define the regular expressions for the different filename formats
 $regexPatterns = @(
-    '_([^_]+?) \(',     # matches filenames like AB_Model_Serie (99).jpg
-    '^.+-(.+?)_',       # matches filenames like Model-Serie_027.jpg
-    '^.+ - (.+?)_',     # matches filenames like AB_Model A - Serie_088.jpg
-    '^(.+?) \(',        # matches filenames like Z_Model_Serie (102).JPG
-    '-([^_]+?)_',       # matches filenames like Model B-Serie_001.jpg
-    '-([^_]+?)-'        # matches filenames like Model-005-008.jpg
-    '_([^_]+?)_teenmodeling_tv_'  # matches filenames like clarissa_model_goldbikini_teenmodeling_tv_092.jpg
+    '_([^_]+?) \(',     # matches filenames like Prefix_Name_Series (99).jpg
+    '^.+-(.+?)_',       # matches filenames like Name-Series_027.jpg
+    '^.+ - (.+?)_',     # matches filenames like Prefix_Name A - Series_088.jpg
+    '^(.+?) \(',        # matches filenames like Prefix_Name_Series (102).jpg
+    '-([^_]+?)_',       # matches filenames like Name B-Series_001.jpg
+    '-([^_]+?)-',       # matches filenames like Name-005-008.jpg
+    '_([^_]+?)_keyword_suffix_'  # matches filenames like name_category_description_keyword_suffix_092.jpg
 )
+
+$loopIteration = 0
+$idleCount = 0
 
 do {
 
@@ -82,10 +80,26 @@ do {
     # Filter the files to include only images
     $files = $allFiles | Where-Object { $_.Extension -match "(?i)\.jpg|\.jpeg|\.png|\.gif" }
 
-    # If there are no files to process, break the loop
+    # If there are no files to process
     if ($files.Count -eq 0) {
-        break
+        if ($loop) {
+            $idleCount++
+            if ($loopIteration -eq 0) {
+                Write-Output "No files to process. Waiting for new files... (Press Ctrl+C to exit)"
+            }
+            # Adaptive sleep: longer wait when idle
+            $sleepTime = [Math]::Min(3 + $idleCount, 10)
+            Start-Sleep -Seconds $sleepTime
+            $loopIteration++
+            continue
+        } else {
+            break
+        }
     }
+    
+    # Reset idle counter when files are found
+    $idleCount = 0
+    $loopIteration++
 
     foreach ($file in $files) {
         # Initialize directory name as null
@@ -116,18 +130,50 @@ do {
             continue
         }
 
+        # Validate directory name doesn't contain path separators or invalid characters
+        if ($dirName -match '[\\\/\:\*\?\"\<\>\|]|\.\.') {
+            Write-Warning "Skipped '$($file.Name)' - invalid directory name: '$dirName'"
+            continue
+        }
+
         # Create the directory path
         $dirPath = Join-Path -Path $actualSourceDir -ChildPath $dirName
 
         # Create the directory if it doesn't exist and $move is true
         if ($move -and !(Test-Path -Path $dirPath)) {
-            New-Item -ItemType Directory -Path $dirPath | Out-Null
-            Write-Output "Created directory: $dirName"
+            try {
+                New-Item -ItemType Directory -Path $dirPath -ErrorAction Stop | Out-Null
+                Write-Output "Created directory: $dirName"
+            }
+            catch {
+                Write-Warning "Failed to create directory '$dirName': $_"
+                continue
+            }
         }
 
         # Move the file to the new directory if $move is true
         if ($move) {
-            Move-Item -Path $file.FullName -Destination $dirPath
+            try {
+                # Handle duplicate filenames by adding a counter
+                $destPath = Join-Path $dirPath $file.Name
+                $counter = 1
+                while (Test-Path $destPath) {
+                    $newName = "$($file.BaseName)_$counter$($file.Extension)"
+                    $destPath = Join-Path $dirPath $newName
+                    $counter++
+                }
+                
+                Move-Item -Path $file.FullName -Destination $destPath -ErrorAction Stop
+                
+                # Notify if file was renamed due to duplicate
+                if ($counter -gt 1) {
+                    Write-Output "Renamed '$($file.Name)' to '$(Split-Path $destPath -Leaf)' (duplicate)"
+                }
+            }
+            catch {
+                Write-Warning "Failed to move '$($file.Name)': $_"
+                continue
+            }
         }
         else {
             Write-Output ("Would move file '{0}' to directory '{1}'." -f $file.Name, $dirName)
@@ -143,9 +189,15 @@ do {
     }
 
     # Output the number of files moved to each directory
-    $dirFileCount.GetEnumerator() | ForEach-Object {
-        Write-Output ("Moved {1} file(s) in directory '{0}'" -f $_.Key, $_.Value)
+    if ($dirFileCount.Count -gt 0) {
+        $dirFileCount.GetEnumerator() | ForEach-Object {
+            Write-Output ("Moved {1} file(s) to directory '{0}'" -f $_.Key, $_.Value)
+        }
+        
+        if ($loop) {
+            Write-Output "Waiting for new files... (Press Ctrl+C to exit)"
+            Start-Sleep -Seconds 3
+        }
     }
-    if ($loop) { Start-Sleep(3) }
 
 } while ($loop)
