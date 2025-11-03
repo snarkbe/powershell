@@ -1,9 +1,8 @@
 
-# Load .env file using powershell-dotenv
-Import-Module powershell-dotenv -ErrorAction Stop
+# Load .env file using dotenv
+Import-Module pwsh-dotenv -ErrorAction Stop
 if (Test-Path "$PSScriptRoot/.env") {
-    $envVars = Get-Dotenv -Path "$PSScriptRoot/.env"
-    $env:NORDVPN_TOKEN = $envVars["NORDVPN_TOKEN"]
+    Import-Dotenv -Path "$PSScriptRoot/.env" -ErrorAction Stop
 } else {
     Write-Error ".env file not found. Please create it from .env.sample and add your NordVPN token."
     exit 1
