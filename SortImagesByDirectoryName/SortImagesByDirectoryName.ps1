@@ -59,6 +59,7 @@ if ($InputPaths -and $InputPaths.Count -gt 0) {
 $regexPatterns = @(
     '_([^_]+?) \(',     # matches filenames like Prefix_Name_Series (99).jpg
     '^.+-(.+?)_',       # matches filenames like Name-Series_027.jpg
+    '^.+-([A-Za-z0-9.-]+?)_', # matches filenames like Prefix-Name.With.Dot_002.jpg -> Name.With.Dot
     '^.+ - (.+?)_',     # matches filenames like Prefix_Name A - Series_088.jpg
     '^(.+?) \(',        # matches filenames like Prefix_Name_Series (102).jpg
     '-([^_]+?)_',       # matches filenames like Name B-Series_001.jpg
@@ -113,8 +114,8 @@ do {
             if ($file.BaseName -match $pattern) {
                 $potentialDirName = $Matches[1].Trim()
 
-                # Check if the potential directory name is clean (contains only letters, numbers and spaces)
-                if ($potentialDirName -match '^[a-zA-Z0-9\s]+$') {
+                # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens)
+                if ($potentialDirName -match '^[a-zA-Z0-9\s\.-]+$') {
                     # If this is the first match or if this match is cleaner than the previous match, update the cleanest directory name
                     if ($null -eq $cleanestDirName -or $potentialDirName.Length -lt $cleanestDirName.Length) {
                         $cleanestDirName = $potentialDirName
