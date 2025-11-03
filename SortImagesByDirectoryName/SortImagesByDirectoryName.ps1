@@ -60,6 +60,7 @@ $regexPatterns = @(
     '_([^_]+?) \(',     # matches filenames like Prefix_Name_Series (99).jpg
     '^.+-(.+?)_',       # matches filenames like Name-Series_027.jpg
     '^.+-([A-Za-z0-9.-]+?)_', # matches filenames like Prefix-Name.With.Dot_002.jpg -> Name.With.Dot
+    '^.+ - ([A-Za-z0-9.-]+?)\s+\d+',     # matches filenames like Prefix-Name - Series 0137.jpg -> Series
     '^.+ - (.+?)_',     # matches filenames like Prefix_Name A - Series_088.jpg
     '^(.+?) \(',        # matches filenames like Prefix_Name_Series (102).jpg
     '-([^_]+?)_',       # matches filenames like Name B-Series_001.jpg
