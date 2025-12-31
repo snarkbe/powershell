@@ -84,7 +84,7 @@ if ($qbtPort -le 0 -or $qbtPort -gt 65535) {
 # --- Script Logic ---
 
 # Basic file validation
-if (-not (Test-Path $torrent -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $torrent -PathType Leaf)) {
     Write-Error "Error: Torrent file not found at '$torrent'"
     # Pause to see the error if launched by double-click
     if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to exit" }
