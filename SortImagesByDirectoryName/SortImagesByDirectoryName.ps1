@@ -1,29 +1,24 @@
 param(
-    # Support for Send To context menu (single folder path)
+    # Support for Send To context menu and command-line positional path
     [Parameter(ValueFromRemainingArguments = $true, Position = 0)]
     [string[]]$InputPaths,
     
-    # Support for command-line usage
+    # Require -move flag to actually move files (both command-line and Send To)
     [Parameter(Mandatory = $false)]
     [switch]$move = $false,
-
-    [Parameter(Mandatory = $false)]
-    [string]$sourceDir = "",
 
     [Parameter(Mandatory = $false)]
     [switch]$loop
 )
 
-# Determine if running from Send To or command line
+# Determine source directory
 $actualSourceDir = ""
+$loopEnabled = $loop.IsPresent
 
-if ($InputPaths -and $InputPaths.Count -gt 0) {
-    # Called from Send To context menu
-    
-    # Add Windows Forms assembly for message boxes when using Send To
+if ($InputPaths.Count -gt 0) {
+    # Path provided as positional argument
     Add-Type -AssemblyName PresentationFramework
     
-    # Ensure only one item is selected
     if ($InputPaths.Count -ne 1) {
         [System.Windows.MessageBox]::Show("Please select only one folder.", "Error")
         exit 1
@@ -31,24 +26,16 @@ if ($InputPaths -and $InputPaths.Count -gt 0) {
     
     $actualSourceDir = $InputPaths[0]
     
-    # Check if the path is a folder
     if (-not (Test-Path $actualSourceDir -PathType Container)) {
         [System.Windows.MessageBox]::Show("Selected item is not a folder.", "Error")
         exit 1
     }
     
-    # For Send To, always move files
-    $move = $true
-    $loop = $false
+    $loopEnabled = $false
 } else {
-    # Called from command line
-    if ($sourceDir -eq "") {
-        $actualSourceDir = (Get-Location).Path
-    } else {
-        $actualSourceDir = $sourceDir
-    }
+    # Use current directory
+    $actualSourceDir = (Get-Location).Path
     
-    # Check if the directory exists
     if (-not (Test-Path $actualSourceDir -PathType Container)) {
         Write-Host "Directory does not exist: $actualSourceDir" -ForegroundColor Red
         exit 1
@@ -57,15 +44,17 @@ if ($InputPaths -and $InputPaths.Count -gt 0) {
 
 # Define the regular expressions for the different filename formats
 $regexPatterns = @(
-    '_([^_]+?) \(',     # matches filenames like Prefix_Name_Series (99).jpg
-    '^.+-(.+?)_',       # matches filenames like Name-Series_027.jpg
-    '^.+-([A-Za-z0-9.-]+?)_', # matches filenames like Prefix-Name.With.Dot_002.jpg -> Name.With.Dot
-    '^.+ - ([A-Za-z0-9.-]+?)\s+\d+',     # matches filenames like Prefix-Name - Series 0137.jpg -> Series
-    '^.+ - (.+?)_',     # matches filenames like Prefix_Name A - Series_088.jpg
-    '^(.+?) \(',        # matches filenames like Prefix_Name_Series (102).jpg
-    '-([^_]+?)_',       # matches filenames like Name B-Series_001.jpg
-    '-([^_]+?)-',       # matches filenames like Name-005-008.jpg
-    '_([^_]+?)_keyword_suffix_'  # matches filenames like name_category_description_keyword_suffix_092.jpg
+    '_([^_\(]+?)\s*\(',  # pattern: prefix_prefix_name (number).ext
+    '_([^_]+?) \(',      # pattern: prefix_name_series (number).ext
+    '^.+-(.+?)_',        # pattern: prefix-series_number.ext
+    '^.+-([A-Za-z0-9.-]+?)_', # pattern: prefix-name.with.dots_number.ext
+    '^.+ - ([A-Za-z0-9.-]+?)\s+\d+',     # pattern: prefix - series number.ext
+    '^.+ - ([A-Za-z0-9.-]+?)\s*\(\d+\)', # pattern: prefix - title (number).ext
+    '^.+ - (.+?)_',      # pattern: prefix - series_number.ext
+    '^(.+?) \(',         # pattern: name (number).ext
+    '-([^_]+?)_',        # pattern: prefix-series_number.ext
+    '-([^_]+?)-',        # pattern: prefix-number-number.ext
+    '_([^_]+?)_keyword_suffix_'  # pattern: prefix_category_description_keyword_suffix_number.ext
 )
 
 $loopIteration = 0
@@ -76,15 +65,12 @@ do {
     # Initialize a hashtable to keep track of the number of files moved to each directory
     $dirFileCount = @{}
 
-    # Get all the files in the directory
-    $allFiles = Get-ChildItem -Path $actualSourceDir -File
-
-    # Filter the files to include only images
-    $files = $allFiles | Where-Object { $_.Extension -match "(?i)\.jpg|\.jpeg|\.png|\.gif" }
+    # Get all image files in the directory
+    $files = Get-ChildItem -Path $actualSourceDir -File -Include *.jpg,*.jpeg,*.png,*.gif
 
     # If there are no files to process
     if ($files.Count -eq 0) {
-        if ($loop) {
+        if ($loopEnabled) {
             $idleCount++
             if ($loopIteration -eq 0) {
                 Write-Output "No files to process. Waiting for new files... (Press Ctrl+C to exit)"
@@ -104,28 +90,20 @@ do {
     $loopIteration++
 
     foreach ($file in $files) {
-        # Initialize directory name as null
-        $dirName = $null
-
-        # Initialize cleanest directory name as null
-        $cleanestDirName = $null
-
         # Try each regex pattern and choose the cleanest directory name
+        $dirName = $null
         foreach ($pattern in $regexPatterns) {
             if ($file.BaseName -match $pattern) {
-                $potentialDirName = $Matches[1].Trim()
+                $potentialDirName = $Matches[1].Trim() -replace '[&!]', '_'
 
-                # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens)
-                if ($potentialDirName -match '^[a-zA-Z0-9\s\.-]+$') {
-                    # If this is the first match or if this match is cleaner than the previous match, update the cleanest directory name
-                    if ($null -eq $cleanestDirName -or $potentialDirName.Length -lt $cleanestDirName.Length) {
-                        $cleanestDirName = $potentialDirName
+                # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens, underscores)
+                if ($potentialDirName -match '^[a-zA-Z0-9\s\._-]+$') {
+                    if ($null -eq $dirName -or $potentialDirName.Length -lt $dirName.Length) {
+                        $dirName = $potentialDirName
                     }
                 }
             }
         }
-
-        $dirName = $cleanestDirName
 
         # If no directory name could be extracted, continue to the next file
         if ($null -eq $dirName) {
@@ -182,24 +160,20 @@ do {
         }
 
         # Increment the count of files moved to the directory
-        if ($dirFileCount.ContainsKey($dirName)) {
-            $dirFileCount[$dirName]++
-        }
-        else {
-            $dirFileCount[$dirName] = 1
-        }
+        $dirFileCount[$dirName] = ($dirFileCount[$dirName] ?? 0) + 1
     }
 
-    # Output the number of files moved to each directory
+    # Output the number of files processed to each directory
     if ($dirFileCount.Count -gt 0) {
+        $action = if ($move) { "Moved" } else { "Would move" }
         $dirFileCount.GetEnumerator() | ForEach-Object {
-            Write-Output ("Moved {1} file(s) to directory '{0}'" -f $_.Key, $_.Value)
+            Write-Output ("{0} {1} file(s) to directory '{2}'" -f $action, $_.Value, $_.Key)
         }
         
-        if ($loop) {
+        if ($loopEnabled) {
             Write-Output "Waiting for new files... (Press Ctrl+C to exit)"
             Start-Sleep -Seconds 3
         }
     }
 
-} while ($loop)
+} while ($loopEnabled)
