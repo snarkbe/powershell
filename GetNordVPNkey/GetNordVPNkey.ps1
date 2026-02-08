@@ -19,7 +19,16 @@ $headers = @{
     Authorization = "Basic $encodedCredentials"
 }
 
-Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+$credentials = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+
+[pscustomobject]@{
+    ID                  = $credentials.id
+    Username            = $credentials.username
+    Password            = $credentials.password
+    "NordLynx Private Key"  = $credentials.nordlynx_private_key
+    "Created At"           = $credentials.created_at
+    "Updated At"           = $credentials.updated_at
+}
 
 $server = Invoke-RestMethod -Uri "https://api.nordvpn.com/v1/servers/recommendations?&filters[servers_technologies][identifier]=wireguard_udp&limit=1"
 
@@ -34,12 +43,12 @@ $server | ForEach-Object {
             Name           = $_.name
             Load           = $_.load
             Station        = $_.Station
-            TechnologyID   = $wireguardTech.id
-            TechnologyName = $wireguardTech.name
+            "Technology ID"   = $wireguardTech.id
+            "Technology Name" = $wireguardTech.name
             Identifier     = $wireguardTech.identifier
-            CreatedAt      = $wireguardTech.created_at
-            UpdatedAt      = $wireguardTech.updated_at
-            PublicKey      = $publicKey
+            "Created At"      = $wireguardTech.created_at
+            "Updated At"      = $wireguardTech.updated_at
+            "Public Key"      = $publicKey
         }
     }
 }
