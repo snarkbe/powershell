@@ -1,3 +1,8 @@
+# Send To shortcut location: %APPDATA%\Microsoft\Windows\SendTo\Sort to Subfolders.lnk
+#   Target: C:\Program Files\PowerShell\7\pwsh.exe
+#   Arguments: -NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -File "<path>\SortImagesByDirectoryName.ps1" -move
+#   Note: Do NOT add "%1" — Windows appends the selected folder automatically.
+
 param(
     # Support for Send To context menu and command-line positional path
     [Parameter(ValueFromRemainingArguments = $true, Position = 0)]
@@ -15,22 +20,30 @@ param(
 $actualSourceDir = ""
 $loopEnabled = $loop.IsPresent
 
-if ($InputPaths.Count -gt 0) {
-    # Path provided as positional argument
-    Add-Type -AssemblyName PresentationFramework
-    
-    if ($InputPaths.Count -ne 1) {
-        [System.Windows.MessageBox]::Show("Please select only one folder.", "Error")
+if ($InputPaths -and $InputPaths.Count -gt 0) {
+    # Path provided as positional argument (e.g. Send To context menu)
+    # Filter out literal %1 which .lnk shortcuts may pass unexpanded
+    $InputPaths = @($InputPaths | Where-Object { $_ -ne '%1' })
+
+    if ($InputPaths.Count -eq 0) {
+        # Only %1 was passed, no actual path
+        Add-Type -AssemblyName PresentationFramework
+        [System.Windows.MessageBox]::Show("No folder path provided.", "Error")
         exit 1
     }
-    
-    $actualSourceDir = $InputPaths[0]
-    
+
+    # When a path with spaces is passed without proper quoting,
+    # ValueFromRemainingArguments splits it into multiple elements.
+    # Join them back into a single path.
+    $actualSourceDir = ($InputPaths -join ' ').Trim()
+
     if (-not (Test-Path $actualSourceDir -PathType Container)) {
-        [System.Windows.MessageBox]::Show("Selected item is not a folder.", "Error")
+        Add-Type -AssemblyName PresentationFramework
+        [System.Windows.MessageBox]::Show("Selected item is not a folder: $actualSourceDir", "Error")
         exit 1
     }
-    
+
+    # Disable loop when called with a path argument
     $loopEnabled = $false
 } else {
     # Use current directory
@@ -59,6 +72,7 @@ $regexPatterns = @(
 
 $loopIteration = 0
 $idleCount = 0
+$maxIdleCount = 20  # Exit loop after ~2 minutes of no new files
 
 do {
 
@@ -66,12 +80,17 @@ do {
     $dirFileCount = @{}
 
     # Get all image files in the directory
-    $files = Get-ChildItem -Path $actualSourceDir -File -Include *.jpg,*.jpeg,*.png,*.gif
+    # Note: -Include requires a wildcard in -Path to work without -Recurse
+    $files = Get-ChildItem -Path (Join-Path $actualSourceDir '*') -File -Include *.jpg,*.jpeg,*.png,*.gif
 
     # If there are no files to process
     if ($files.Count -eq 0) {
         if ($loopEnabled) {
             $idleCount++
+            if ($idleCount -ge $maxIdleCount) {
+                Write-Output "No new files detected for a while. Exiting."
+                break
+            }
             if ($loopIteration -eq 0) {
                 Write-Output "No files to process. Waiting for new files... (Press Ctrl+C to exit)"
             }
@@ -155,9 +174,9 @@ do {
                 continue
             }
         }
-        else {
-            Write-Output ("Would move file '{0}' to directory '{1}'." -f $file.Name, $dirName)
-        }
+        # else {
+        #     Write-Output ("Would move file '{0}' to directory '{1}'." -f $file.Name, $dirName)
+        # }
 
         # Increment the count of files moved to the directory
         $dirFileCount[$dirName] = ($dirFileCount[$dirName] ?? 0) + 1
