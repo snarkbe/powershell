@@ -43,8 +43,8 @@ if ($InputPaths -and $InputPaths.Count -gt 0) {
         exit 1
     }
 
-    # Disable loop when called with a path argument
-    $loopEnabled = $false
+    # Disable loop when called with a path argument (unless explicitly requested via -loop)
+    if (-not $loop.IsPresent) { $loopEnabled = $false }
 } else {
     # Use current directory
     $actualSourceDir = (Get-Location).Path
@@ -72,7 +72,7 @@ $regexPatterns = @(
 
 $loopIteration = 0
 $idleCount = 0
-$maxIdleCount = 20  # Exit loop after ~2 minutes of no new files
+$maxIdleCount = 5   # Exit loop after ~30 seconds of no new files
 
 do {
 
@@ -86,13 +86,14 @@ do {
     # If there are no files to process
     if ($files.Count -eq 0) {
         if ($loopEnabled) {
+            if ($loopIteration -eq 0) {
+                Write-Output "No files to process. Exiting."
+                break
+            }
             $idleCount++
             if ($idleCount -ge $maxIdleCount) {
                 Write-Output "No new files detected for a while. Exiting."
                 break
-            }
-            if ($loopIteration -eq 0) {
-                Write-Output "No files to process. Waiting for new files... (Press Ctrl+C to exit)"
             }
             # Adaptive sleep: longer wait when idle
             $sleepTime = [Math]::Min(3 + $idleCount, 10)
