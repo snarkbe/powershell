@@ -4,7 +4,7 @@
 try {
     New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT -ErrorAction Stop | Out-Null
 } catch {
-    Write-Output "Error creating PSDrive: $_"
+    Write-Host "Error creating PSDrive: $_" -ForegroundColor Red
     return
 }
 
@@ -23,16 +23,17 @@ foreach ($keyPath in $keyPaths) {
     $keysToRemove = @(
         "${keyPath}git_gui",
         "${keyPath}git_shell",
+        "${keyPath}MobaXterm",
         "${keyPath}OpenWithMobaXterm",
         "${keyPath}MobaDiff",
         "${keyPath}OpenWithMobaFind"
     )
 
     foreach ($keyToRemove in $keysToRemove) {
-        Write-Output "Checking $keyToRemove"
+        Write-Host "Checking $keyToRemove" -ForegroundColor DarkGray
         if (Test-Path $keyToRemove) {
             Remove-Item -Path $keyToRemove -Recurse -Force
-            Write-Output "Removed $keyToRemove"
+            Write-Host "Removed $keyToRemove" -ForegroundColor Green
         }
     }
 }
