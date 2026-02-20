@@ -61,7 +61,7 @@ $regexPatterns = @(
     '_([^_]+?) \(',      # pattern: prefix_name_series (number).ext
     '^.+-(.+?)_',        # pattern: prefix-series_number.ext
     '^.+-([A-Za-z0-9.-]+?)_', # pattern: prefix-name.with.dots_number.ext
-    '^.+ - ([A-Za-z0-9.-]+?)\s+\d+',     # pattern: prefix - series number.ext
+    '^.+ - (.+?)\s+\d+$',                 # pattern: prefix - series name with spaces number.ext
     '^.+ - ([A-Za-z0-9.-]+?)\s*\(\d+\)', # pattern: prefix - title (number).ext
     '^.+ - (.+?)_',      # pattern: prefix - series_number.ext
     '^(.+?) \(',         # pattern: name (number).ext
