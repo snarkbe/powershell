@@ -70,6 +70,8 @@ $regexPatterns = @(
     '_([^_]+?)_keyword_suffix_'  # pattern: prefix_category_description_keyword_suffix_number.ext
 )
 
+Write-Output "Processing: $actualSourceDir"
+
 $loopIteration = 0
 $idleCount = 0
 $maxIdleCount = 5   # Exit loop after ~30 seconds of no new files
