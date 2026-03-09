@@ -76,6 +76,12 @@ $maxIdleCount = 5   # Exit loop after ~30 seconds of no new files
 
 do {
 
+    # Exit if the source directory was deleted while the script is running
+    if (-not (Test-Path $actualSourceDir -PathType Container)) {
+        Write-Output "Source directory no longer exists: $actualSourceDir. Exiting."
+        break
+    }
+
     # Initialize a hashtable to keep track of the number of files moved to each directory
     $dirFileCount = @{}
 
