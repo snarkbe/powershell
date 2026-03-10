@@ -124,8 +124,8 @@ do {
             if ($file.BaseName -match $pattern) {
                 $potentialDirName = $Matches[1].Trim() -replace '[&!]', '_'
 
-                # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens, underscores)
-                if ($potentialDirName -match '^[a-zA-Z0-9\s\._-]+$') {
+                # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens, underscores, apostrophes)
+                if ($potentialDirName -match "^[a-zA-Z0-9\s\._'\-]+$") {
                     if ($null -eq $dirName -or $potentialDirName.Length -lt $dirName.Length) {
                         $dirName = $potentialDirName
                     }
