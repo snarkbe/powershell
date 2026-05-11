@@ -62,6 +62,28 @@ $qbtUser = $config.qbtUser
 $qbtPassword = $config.qbtPassword
 $useHttps = $config.useHttps
 $ignoreCert = $config.ignoreCert
+$exitTimeoutSeconds = if ($null -ne $config.exitTimeoutSeconds) { [int]$config.exitTimeoutSeconds } else { 20 }
+
+function Wait-ForExit {
+    param([int]$TimeoutSeconds = 20)
+    if ($Host.Name -ne "ConsoleHost") { return }
+    if ($TimeoutSeconds -le 0) {
+        Read-Host "Press Enter to exit"
+        return
+    }
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    Write-Host ""
+    while ((Get-Date) -lt $deadline) {
+        $remaining = [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds)
+        Write-Host -NoNewline ("`rPress any key to exit (auto-close in {0:D2} s)... " -f $remaining)
+        if ([Console]::KeyAvailable) {
+            [void][Console]::ReadKey($true)
+            break
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    Write-Host ""
+}
 
 # Validate required configuration values
 if ([string]::IsNullOrWhiteSpace($qbtHost)) {
@@ -87,7 +109,7 @@ if ($qbtPort -le 0 -or $qbtPort -gt 65535) {
 if (-not (Test-Path -LiteralPath $torrent -PathType Leaf)) {
     Write-Error "Error: Torrent file not found at '$torrent'"
     # Pause to see the error if launched by double-click
-    if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to exit" }
+    Wait-ForExit -TimeoutSeconds $exitTimeoutSeconds
     exit 1
 }
 if ($torrent -notlike "*.torrent") {
@@ -104,7 +126,7 @@ try {
 }
 catch {
     Write-Error "Error: curl.exe is not found in PATH. Please ensure curl is installed (included in Windows 10+)."
-    if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to exit" }
+    Wait-ForExit -TimeoutSeconds $exitTimeoutSeconds
     exit 1
 }
 
@@ -275,7 +297,7 @@ try {
 catch {
     Write-Error "An error occurred: $($_.Exception.Message)"
     # Pause to see the error if launched by double-click
-    if ($Host.Name -eq "ConsoleHost") { Read-Host "Press Enter to exit" }
+    Wait-ForExit -TimeoutSeconds $exitTimeoutSeconds
     exit 1
 }
 finally {

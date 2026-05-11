@@ -4,5 +4,6 @@
     "qbtUser": "your-username",
     "qbtPassword": "your-password",
     "useHttps": false,
-    "ignoreCert": false
+    "ignoreCert": false,
+    "exitTimeoutSeconds": 20
 }
