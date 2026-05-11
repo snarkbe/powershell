@@ -118,7 +118,8 @@ $addUrl = "$baseUrl/api/v2/torrents/add"
 # Prepare curl arguments
 $curlArgs = @(
     "-s", "-S" # Silent mode but displays errors
-    "--fail", # Fails silently on HTTP error
+    # Append the HTTP status code on its own line so we can distinguish 200 from 409 (already added) etc.
+    "-w", "`n%{http_code}",
     # -F option for multipart/form-data: 'field_name=@file_path;type=mime_type'
     # Make sure the path is properly quoted if it contains spaces
     "-F", "torrents=@`"$torrent`";type=application/x-bittorrent"
@@ -206,24 +207,68 @@ try {
     $uploadOutput = & $curlExe $curlArgs 2>&1 # Redirect stderr to stdout to capture curl errors
     $curlExitCode = $LASTEXITCODE
 
-    # Check the result
-    if ($curlExitCode -eq 0 -and $uploadOutput -match "Ok.") {
-        Write-Host "Success: Torrent '$([System.IO.Path]::GetFileName($torrent))' successfully added to qBittorrent." -ForegroundColor Green
-        
-        # Delete the torrent file after successful addition
+    if ($curlExitCode -ne 0) {
+        throw "Failed to upload torrent file (Exit Code: $curlExitCode). Server response: $uploadOutput`nPlease check network connectivity and qBittorrent server status."
+    }
+
+    # The -w "\n%{http_code}" option appends the HTTP status code on the last line of the output.
+    $uploadText = ($uploadOutput | Out-String).TrimEnd()
+    $lastNewline = $uploadText.LastIndexOf("`n")
+    if ($lastNewline -ge 0) {
+        $httpCode = $uploadText.Substring($lastNewline + 1).Trim()
+        $responseBody = $uploadText.Substring(0, $lastNewline).Trim()
+    }
+    else {
+        $httpCode = $uploadText.Trim()
+        $responseBody = ""
+    }
+
+    # qBittorrent returns "Ok." (older versions), an empty body, or JSON with success_count/failure_count (newer versions).
+    $torrentName = [System.IO.Path]::GetFileName($torrent)
+    $shouldDeleteFile = $false
+
+    if ($httpCode -eq "200") {
+        $isSuccess = $false
+        if ([string]::IsNullOrWhiteSpace($responseBody) -or $responseBody -eq "Ok.") {
+            $isSuccess = $true
+        }
+        else {
+            try {
+                $response = $responseBody | ConvertFrom-Json -ErrorAction Stop
+                $isSuccess = ($response.success_count -ge 1 -and $response.failure_count -eq 0)
+            }
+            catch {
+                $isSuccess = $false
+            }
+        }
+
+        if ($isSuccess) {
+            Write-Host "Success: Torrent '$torrentName' successfully added to qBittorrent." -ForegroundColor Green
+            $shouldDeleteFile = $true
+        }
+        else {
+            throw "Upload completed but qBittorrent returned unexpected response. Output: $responseBody`nThis may indicate a server-side error."
+        }
+    }
+    elseif ($httpCode -eq "409") {
+        Write-Host "Torrent '$torrentName' is already present in qBittorrent." -ForegroundColor Yellow
+        $shouldDeleteFile = $true
+    }
+    elseif ($httpCode -eq "415") {
+        throw "qBittorrent rejected '$torrentName' as an invalid torrent file (HTTP 415). The file may be corrupt or incomplete; the local file has been kept for inspection."
+    }
+    else {
+        throw "Failed to upload torrent file (HTTP $httpCode). Server response: $responseBody`nPlease check network connectivity and qBittorrent server status."
+    }
+
+    if ($shouldDeleteFile) {
         try {
-            Remove-Item -Path $torrent -Force -ErrorAction Stop
+            Remove-Item -LiteralPath $torrent -Force -ErrorAction Stop
             Write-Verbose "Torrent file deleted: '$torrent'"
         }
         catch {
-            Write-Warning "Torrent added successfully, but could not delete the torrent file: $($_.Exception.Message)"
+            Write-Warning "Could not delete the torrent file: $($_.Exception.Message)"
         }
-    }
-    elseif ($curlExitCode -eq 0) {
-        throw "Upload completed but qBittorrent returned unexpected response. Output: $uploadOutput`nThis may indicate the torrent was already added or there was a server-side error."
-    }
-    else {
-        throw "Failed to upload torrent file (Exit Code: $curlExitCode). Server response: $uploadOutput`nPlease check network connectivity and qBittorrent server status."
     }
 
 }
