@@ -48,7 +48,7 @@ if (-not (Test-Path $configFilePath)) {
 }
 
 try {
-    $config = Get-Content -Path $configFilePath | ConvertFrom-Json
+    $config = Get-Content -Raw -Path $configFilePath | ConvertFrom-Json
 }
 catch {
     Write-Error "Error: Unable to read or parse the configuration file. $_"
@@ -73,8 +73,8 @@ function Wait-ForExit {
     }
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     Write-Host ""
-    while ((Get-Date) -lt $deadline) {
-        $remaining = [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds)
+    while (($now = Get-Date) -lt $deadline) {
+        $remaining = [int][Math]::Ceiling(($deadline - $now).TotalSeconds)
         Write-Host -NoNewline ("`rPress any key to exit (auto-close in {0:D2} s)... " -f $remaining)
         if ([Console]::KeyAvailable) {
             [void][Console]::ReadKey($true)
@@ -180,7 +180,7 @@ $tempFileName = "qbt_cookie_" + [System.Guid]::NewGuid().ToString() + ".txt"
 $cookieFile = Join-Path -Path $env:TEMP -ChildPath $tempFileName
 
 try {
-    Write-Host "Attempting to add torrent: '$([System.IO.Path]::GetFileName($torrent))' to $addUrl"
+    Write-Host "Attempting to add torrent: '$(Split-Path $torrent -Leaf)' to $addUrl"
     
     # User/Pass method with curl (obtaining the SID cookie)
     Write-Verbose "Using Username/Password authentication with curl."
@@ -198,7 +198,7 @@ try {
     )
     if ($ignoreCert) { $loginCurlArgs += "-k" } # Ignore SSL certificate errors (if HTTPS)
     $loginCurlArgs += @(
-        "-c", "$cookieFile", # Save the cookie
+        "-c", "$cookieFile",
         "--data-binary", "`"$loginData`"", # Send as data
         "-H", "`"Content-Type: application/x-www-form-urlencoded`"",
         "$loginUrl"
@@ -213,20 +213,16 @@ try {
         throw "Failed to obtain authentication cookie from qBittorrent. The server may be unreachable or credentials may be invalid."
     }
     Write-Verbose "Session cookie obtained successfully."
-    # -b $cookieFile : Read cookies from the file for the next request
     $curlArgs += "-b", $cookieFile
-
-    # Add the final URL to curl arguments
     $curlArgs += $addUrl
 
-    # Execute the curl command for upload
     Write-Verbose "Uploading torrent file to qBittorrent..."
     Write-Verbose "Upload URL: $addUrl"
     if ($savePath) { Write-Verbose "Save path: $savePath" }
     if ($category) { Write-Verbose "Category: $category" }
     Write-Verbose "Options: Paused=$paused, Sequential=$sequential, FirstLastPiecePrio=$firstLastPiecePrio"
     
-    $uploadOutput = & $curlExe $curlArgs 2>&1 # Redirect stderr to stdout to capture curl errors
+    $uploadOutput = & $curlExe $curlArgs 2>&1
     $curlExitCode = $LASTEXITCODE
 
     if ($curlExitCode -ne 0) {
@@ -234,7 +230,7 @@ try {
     }
 
     # The -w "\n%{http_code}" option appends the HTTP status code on the last line of the output.
-    $uploadText = ($uploadOutput | Out-String).TrimEnd()
+    $uploadText = ($uploadOutput -join "`n").TrimEnd()
     $lastNewline = $uploadText.LastIndexOf("`n")
     if ($lastNewline -ge 0) {
         $httpCode = $uploadText.Substring($lastNewline + 1).Trim()
@@ -246,31 +242,23 @@ try {
     }
 
     # qBittorrent returns "Ok." (older versions), an empty body, or JSON with success_count/failure_count (newer versions).
-    $torrentName = [System.IO.Path]::GetFileName($torrent)
+    $torrentName = Split-Path $torrent -Leaf
     $shouldDeleteFile = $false
 
     if ($httpCode -eq "200") {
-        $isSuccess = $false
-        if ([string]::IsNullOrWhiteSpace($responseBody) -or $responseBody -eq "Ok.") {
-            $isSuccess = $true
-        }
-        else {
+        $uploadOk = [string]::IsNullOrWhiteSpace($responseBody) -or $responseBody -eq "Ok."
+        if (-not $uploadOk) {
             try {
-                $response = $responseBody | ConvertFrom-Json -ErrorAction Stop
-                $isSuccess = ($response.success_count -ge 1 -and $response.failure_count -eq 0)
+                $parsed = $responseBody | ConvertFrom-Json -ErrorAction Stop
+                $uploadOk = $parsed.success_count -ge 1 -and $parsed.failure_count -eq 0
             }
-            catch {
-                $isSuccess = $false
-            }
+            catch { }
         }
-
-        if ($isSuccess) {
-            Write-Host "Success: Torrent '$torrentName' successfully added to qBittorrent." -ForegroundColor Green
-            $shouldDeleteFile = $true
-        }
-        else {
+        if (-not $uploadOk) {
             throw "Upload completed but qBittorrent returned unexpected response. Output: $responseBody`nThis may indicate a server-side error."
         }
+        Write-Host "Success: Torrent '$torrentName' successfully added to qBittorrent." -ForegroundColor Green
+        $shouldDeleteFile = $true
     }
     elseif ($httpCode -eq "409") {
         Write-Host "Torrent '$torrentName' is already present in qBittorrent." -ForegroundColor Yellow

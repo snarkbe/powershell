@@ -67,7 +67,8 @@ $regexPatterns = @(
     '^(.+?) \(',         # pattern: name (number).ext
     '-([^_]+?)_',        # pattern: prefix-series_number.ext
     '-([^_]+?)-',        # pattern: prefix-number-number.ext
-    '_([^_]+?)_keyword_suffix_'  # pattern: prefix_category_description_keyword_suffix_number.ext
+    '_([^_]+?)_keyword_suffix_',  # pattern: prefix_category_description_keyword_suffix_number.ext
+    '^\w+\.\d{4}\.\d{2}\.\d{2}\.\w+\.(.+?)_\d+$'  # pattern: Publisher.YYYY.MM.DD.Author.Content_NNNN.ext
 )
 
 Write-Output "Processing: $actualSourceDir"
@@ -122,7 +123,7 @@ do {
         $dirName = $null
         foreach ($pattern in $regexPatterns) {
             if ($file.BaseName -match $pattern) {
-                $potentialDirName = $Matches[1].Trim() -replace '[&!]', '_'
+                $potentialDirName = $Matches[1].Trim() -replace '[&!]', '_' -replace '\.', ' '
 
                 # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens, underscores, apostrophes)
                 if ($potentialDirName -match "^[a-zA-Z0-9\s\._'\-]+$") {
