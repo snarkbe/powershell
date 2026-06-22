@@ -119,16 +119,42 @@ do {
     $loopIteration++
 
     foreach ($file in $files) {
-        # Try each regex pattern and choose the cleanest directory name
         $dirName = $null
-        foreach ($pattern in $regexPatterns) {
-            if ($file.BaseName -match $pattern) {
-                $potentialDirName = $Matches[1].Trim() -replace '[&!]', '_' -replace '\.', ' '
 
-                # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens, underscores, apostrophes)
-                if ($potentialDirName -match "^[a-zA-Z0-9\s\._'\-]+$") {
-                    if ($null -eq $dirName -or $potentialDirName.Length -lt $dirName.Length) {
-                        $dirName = $potentialDirName
+        # Special case: Title_Model_Quality_Index (dashes encode spacing in the title)
+        # e.g. Some---Title-With-Dashes_Author-Name_high_0002 -> "Some - Title With Dashes"
+        # Handled before the generic patterns because the title needs dash-decoding and is
+        # longer than the spurious matches the shortest-clean-name rule below would otherwise pick.
+        # The quality keyword list is the extension point for future quality tags.
+        if ($file.BaseName -match '^(.+?)_.+_(?:high|medium|low|hd|sd|raw|ultra|orig|original)_\d+$') {
+            $title = $Matches[1]
+            # Decode dashes without mangling the " - " separator: use a sentinel for runs of 2+ dashes.
+            $sentinel = [char]0x1
+            $decoded = $title -replace '-{2,}', $sentinel `
+                              -replace '-', ' ' `
+                              -replace $sentinel, ' - '
+            $dirName = ($decoded -replace '\s+', ' ').Trim()
+        }
+
+        # Special case: Author_Title-With-Dashes Index (trailing space-separated number)
+        # e.g. Author-Name_Title-of-Something 062.jpg -> "Title of Something"
+        if ($null -eq $dirName -and $file.BaseName -match '^[^_]+_(.+?)\s+\d+$') {
+            $title = $Matches[1]
+            $dirName = ($title -replace '-', ' ' -replace '\s+', ' ').Trim()
+        }
+
+        # Try each regex pattern and choose the cleanest directory name
+        # (only when the special case above did not already produce a name)
+        if ($null -eq $dirName) {
+            foreach ($pattern in $regexPatterns) {
+                if ($file.BaseName -match $pattern) {
+                    $potentialDirName = $Matches[1].Trim() -replace '[&!]', '_' -replace '\.', ' '
+
+                    # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens, underscores, apostrophes)
+                    if ($potentialDirName -match "^[a-zA-Z0-9\s\._'\-]+$") {
+                        if ($null -eq $dirName -or $potentialDirName.Length -lt $dirName.Length) {
+                            $dirName = $potentialDirName
+                        }
                     }
                 }
             }
