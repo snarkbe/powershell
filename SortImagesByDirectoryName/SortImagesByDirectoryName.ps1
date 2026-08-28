@@ -43,6 +43,9 @@ if ($InputPaths -and $InputPaths.Count -gt 0) {
         exit 1
     }
 
+    # Resolve to an absolute path so the folder name (e.g. '.' -> 'Subject A') is correct.
+    $actualSourceDir = (Resolve-Path -LiteralPath $actualSourceDir).Path
+
     # Disable loop when called with a path argument (unless explicitly requested via -loop)
     if (-not $loop.IsPresent) { $loopEnabled = $false }
 } else {
@@ -55,27 +58,58 @@ if ($InputPaths -and $InputPaths.Count -gt 0) {
     }
 }
 
-# Define the regular expressions for the different filename formats
-$regexPatterns = @(
-    '_([^_\(]+?)\s*\(',  # pattern: prefix_prefix_name (number).ext
-    '_([^_]+?) \(',      # pattern: prefix_name_series (number).ext
-    '^.+-(.+?)_',        # pattern: prefix-series_number.ext
-    '^.+-([A-Za-z0-9.-]+?)_', # pattern: prefix-name.with.dots_number.ext
-    '^.+ - (.+?)\s+\d+$',                 # pattern: prefix - series name with spaces number.ext
-    '^.+ - ([A-Za-z0-9.-]+?)\s*\(\d+\)', # pattern: prefix - title (number).ext
-    '^.+ - (.+?)_',      # pattern: prefix - series_number.ext
-    '^(.+?) \(',         # pattern: name (number).ext
-    '-([^_]+?)_',        # pattern: prefix-series_number.ext
-    '-([^_]+?)-',        # pattern: prefix-number-number.ext
-    '_([^_]+?)_keyword_suffix_',  # pattern: prefix_category_description_keyword_suffix_number.ext
-    '^\w+\.\d{4}\.\d{2}\.\d{2}\.\w+\.(.+?)_\d+$'  # pattern: Publisher.YYYY.MM.DD.Author.Content_NNNN.ext
+# Extractors are tried in order.
+# Decode = $true  : dashes decoded as spaces (multi-dash → ' - ') — first valid match wins.
+# Decode = $false : ampersands and dots normalised only — shortest valid match wins.
+$extractors = @(
+    # Title_Author_Quality_Index  — quality tag suffix present
+    @{ P = '^(.+?)_.+_(?:high|medium|low|hd|sd|raw|ultra|orig|original)_\d+$'; Decode = $true  },
+    # Author_Title-Name Index     — underscore prefix, title with dashes, trailing space+number
+    @{ P = '^[^_]+_(.+?)\s+\d+$';                                               Decode = $true  },
+    # Author_Title-Name_Index     — underscore prefix, title with dashes, trailing _number
+    @{ P = '^[^_]+_(.+?)_\d+$';                                                 Decode = $true  },
+    # Title-Name Index            — hyphenated title only, no prefix, trailing number
+    @{ P = '^([A-Za-z][A-Za-z0-9]+(?:-[A-Za-z0-9]+)+)\s+\d+$';                Decode = $true  },
+    # prefix - title (number)
+    @{ P = '^.+ - ([A-Za-z0-9.-]+?)\s*\(\d+\)';                               Decode = $false },
+    # prefix - series name number
+    @{ P = '^.+ - (.+?)\s+\d+$';                                                Decode = $false },
+    # prefix - series_number
+    @{ P = '^.+ - (.+?)_';                                                        Decode = $false },
+    # _name (number)
+    @{ P = '_([^_\(]+?)\s*\(';                                                  Decode = $false },
+    @{ P = '_([^_]+?) \(';                                                        Decode = $false },
+    # name (number)
+    @{ P = '^(.+?) \(';                                                           Decode = $false },
+    # prefix-series_number
+    @{ P = '^.+-([A-Za-z0-9 .-]+?)_';                                            Decode = $false },
+    @{ P = '-([^_]+?)_';                                                          Decode = $false },
+    @{ P = '-([^_]+?)-';                                                          Decode = $false },
+    # Publisher.YYYY.MM.DD.Author.Content_NNNN
+    @{ P = '^\w+\.\d{4}\.\d{2}\.\d{2}\.\w+\.(.+?)_\d+$';               Decode = $false }
 )
+
+# The containing folder name is often the best hint for the subject name.
+# When a file's name references it (treating spaces, '-' and '_' as interchangeable),
+# prefer the folder name over the regex extractors below.
+$sourceFolderName = Split-Path $actualSourceDir -Leaf
+$folderGuess      = ($sourceFolderName -replace '[\\\/\:\*\?\"\<\>\|]', '' -replace '\s+', ' ').Trim()
+$folderGuessValid = ($folderGuess -match "^[a-zA-Z0-9\s\._'\-]+$") -and $folderGuess.Length -gt 0
+# Normalised, regex-escaped token used to test whether a file name references the folder.
+$folderToken      = [regex]::Escape((($folderGuess -replace '[\s_\-]+', ' ').Trim())) -replace '\\\ ', '[\s_\-]+'
+# Require the token to land on a word boundary so it can't match inside an unrelated
+# word (e.g. subject/folder name 'Lea' must not match the 'lea' hidden inside 'Pleasure').
+$folderTokenPattern = "(?<![a-zA-Z0-9])(?:$folderToken)(?![a-zA-Z0-9])"
 
 Write-Output "Processing: $actualSourceDir"
 
 $loopIteration = 0
 $idleCount = 0
-$maxIdleCount = 5   # Exit loop after ~30 seconds of no new files
+$hasSeenFiles = $false
+$maxIdleCount = 5                    # Once files have been seen: exit after ~30s of no new files
+$maxIdleCountBeforeFirstFile = 33    # Before any file has been seen: allow ~5 min grace, so a watcher
+                                      # started for a queued/sequential download isn't closed before its
+                                      # first file arrives.
 
 do {
 
@@ -95,12 +129,9 @@ do {
     # If there are no files to process
     if ($files.Count -eq 0) {
         if ($loopEnabled) {
-            if ($loopIteration -eq 0) {
-                Write-Output "No files to process. Exiting."
-                break
-            }
             $idleCount++
-            if ($idleCount -ge $maxIdleCount) {
+            $currentMaxIdle = if ($hasSeenFiles) { $maxIdleCount } else { $maxIdleCountBeforeFirstFile }
+            if ($idleCount -ge $currentMaxIdle) {
                 Write-Output "No new files detected for a while. Exiting."
                 break
             }
@@ -113,48 +144,58 @@ do {
             break
         }
     }
-    
+
     # Reset idle counter when files are found
     $idleCount = 0
+    $hasSeenFiles = $true
     $loopIteration++
 
     foreach ($file in $files) {
-        $dirName = $null
+        $dirName  = $null
+        $sentinel = [char]0x1
 
-        # Special case: Title_Model_Quality_Index (dashes encode spacing in the title)
-        # e.g. Some---Title-With-Dashes_Author-Name_high_0002 -> "Some - Title With Dashes"
-        # Handled before the generic patterns because the title needs dash-decoding and is
-        # longer than the spurious matches the shortest-clean-name rule below would otherwise pick.
-        # The quality keyword list is the extension point for future quality tags.
-        if ($file.BaseName -match '^(.+?)_.+_(?:high|medium|low|hd|sd|raw|ultra|orig|original)_\d+$') {
-            $title = $Matches[1]
-            # Decode dashes without mangling the " - " separator: use a sentinel for runs of 2+ dashes.
-            $sentinel = [char]0x1
-            $decoded = $title -replace '-{2,}', $sentinel `
-                              -replace '-', ' ' `
-                              -replace $sentinel, ' - '
-            $dirName = ($decoded -replace '\s+', ' ').Trim()
+        # Best guess: the containing folder name is the subject name. When the file
+        # name references it, strip that subject portion (and the trailing index) and
+        # use the remaining title as the subfolder name.
+        # e.g. folder 'Subject A', file 'Some-Title_Subject-A_0124' -> 'Some Title'
+        if ($folderGuessValid -and $file.BaseName -match $folderTokenPattern) {
+            $title = $file.BaseName -replace $folderTokenPattern, ' '   # drop the subject name
+            $title = $title -replace '[_\s\-]*\d+$', ''          # drop the trailing index
+            $title = $title -replace '_', ' '                    # field separators -> space
+            # Decode dashes: runs of 2+ -> ' - ', single -> space
+            $title = $title -replace '-{2,}', $sentinel `
+                            -replace '-',     ' '       `
+                            -replace $sentinel, ' - '
+            $title = ($title -replace '\s+', ' ').Trim(" -")
+            if ($title -match "^[a-zA-Z0-9\s\._'\-]+$" -and $title.Length -gt 0) {
+                $dirName = $title
+            }
         }
 
-        # Special case: Author_Title-With-Dashes Index (trailing space-separated number)
-        # e.g. Author-Name_Title-of-Something 062.jpg -> "Title of Something"
-        if ($null -eq $dirName -and $file.BaseName -match '^[^_]+_(.+?)\s+\d+$') {
-            $title = $Matches[1]
-            $dirName = ($title -replace '-', ' ' -replace '\s+', ' ').Trim()
-        }
+        foreach ($extractor in $extractors) {
+            if ($null -ne $dirName) { break }
 
-        # Try each regex pattern and choose the cleanest directory name
-        # (only when the special case above did not already produce a name)
-        if ($null -eq $dirName) {
-            foreach ($pattern in $regexPatterns) {
-                if ($file.BaseName -match $pattern) {
-                    $potentialDirName = $Matches[1].Trim() -replace '[&!]', '_' -replace '\.', ' '
+            if ($file.BaseName -notmatch $extractor.P) { continue }
 
-                    # Check if the potential directory name is clean (letters, numbers, spaces, dots, hyphens, underscores, apostrophes)
-                    if ($potentialDirName -match "^[a-zA-Z0-9\s\._'\-]+$") {
-                        if ($null -eq $dirName -or $potentialDirName.Length -lt $dirName.Length) {
-                            $dirName = $potentialDirName
-                        }
+            $candidate = $Matches[1].Trim()
+
+            if ($extractor.Decode) {
+                # Decode dashes: runs of 2+ → ' - ', single → space
+                $candidate = $candidate -replace '-{2,}', $sentinel `
+                                        -replace '-',     ' '       `
+                                        -replace $sentinel, ' - '
+                $candidate = ($candidate -replace '\s+', ' ').Trim()
+                # Priority pattern: first valid match wins
+                if ($candidate -match "^[a-zA-Z0-9\s\._'\-]+$" -and $candidate.Length -gt 0) {
+                    $dirName = $candidate
+                    break
+                }
+            } else {
+                $candidate = ($candidate -replace '[&!]', '_' -replace '\.', ' ' -replace '\s+', ' ').Trim()
+                # Generic pattern: shortest valid match wins
+                if ($candidate -match "^[a-zA-Z0-9\s\._'\-]+$" -and $candidate.Length -gt 0) {
+                    if ($null -eq $dirName -or $candidate.Length -lt $dirName.Length) {
+                        $dirName = $candidate
                     }
                 }
             }
@@ -163,6 +204,24 @@ do {
         # If no directory name could be extracted, continue to the next file
         if ($null -eq $dirName) {
             continue
+        }
+
+        # Cover files belong with the gallery photos, not in a separate '<name> cover ...'
+        # folder. Strip the trailing 'cover' token and any qualifier (e.g. 'clean', 'wide',
+        # a number) so the file lands in the gallery directory:
+        #   'Sunset cover'      -> 'Sunset'
+        #   'BeachDay cover wide' -> 'BeachDay'
+        if ($dirName -match '\s+cover(\s.*|\d*)?$') {
+            $stripped = ($dirName -replace '\s+cover(\s.*|\d*)?$', '').Trim()
+            if ($stripped.Length -gt 0) {
+                $dirName = $stripped
+            }
+        }
+
+        # Capitalize the first letter of the folder name, even when the filename is
+        # lowercase (e.g. 'sunset' -> 'Sunset'). Leading non-letters are left as-is.
+        if ($dirName.Length -gt 0) {
+            $dirName = $dirName.Substring(0, 1).ToUpper() + $dirName.Substring(1)
         }
 
         # Validate directory name doesn't contain path separators or invalid characters
