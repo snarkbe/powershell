@@ -101,6 +101,27 @@ $folderToken      = [regex]::Escape((($folderGuess -replace '[\s_\-]+', ' ').Tri
 # word (e.g. subject/folder name 'Lea' must not match the 'lea' hidden inside 'Pleasure').
 $folderTokenPattern = "(?<![a-zA-Z0-9])(?:$folderToken)(?![a-zA-Z0-9])"
 
+# Single-instance guard per folder: when several downloads for the same folder each
+# launch the script, only the first one does the sorting; later ones exit immediately.
+# The mutex name is derived from a hash of the normalised path (names can't contain '\').
+$normalisedDir = $actualSourceDir.TrimEnd('\').ToLowerInvariant()
+$pathHash      = [System.BitConverter]::ToString(
+                     [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                         [System.Text.Encoding]::UTF8.GetBytes($normalisedDir))) -replace '-', ''
+$mutex         = New-Object System.Threading.Mutex($false, "Local\SortImagesByDirectoryName_$pathHash")
+try {
+    $hasLock = $mutex.WaitOne(0)
+}
+catch [System.Threading.AbandonedMutexException] {
+    # A previous instance crashed without releasing the lock — we now own it.
+    $hasLock = $true
+}
+if (-not $hasLock) {
+    Write-Output "Another instance is already sorting: $actualSourceDir. Exiting."
+    $mutex.Dispose()
+    exit 0
+}
+
 Write-Output "Processing: $actualSourceDir"
 
 $loopIteration = 0
@@ -111,183 +132,194 @@ $maxIdleCountBeforeFirstFile = 33    # Before any file has been seen: allow ~5 m
                                       # started for a queued/sequential download isn't closed before its
                                       # first file arrives.
 
-do {
+try {
+    do {
 
-    # Exit if the source directory was deleted while the script is running
-    if (-not (Test-Path $actualSourceDir -PathType Container)) {
-        Write-Output "Source directory no longer exists: $actualSourceDir. Exiting."
-        break
-    }
-
-    # Initialize a hashtable to keep track of the number of files moved to each directory
-    $dirFileCount = @{}
-
-    # Get all image files in the directory
-    # Note: -Include requires a wildcard in -Path to work without -Recurse
-    $files = Get-ChildItem -Path (Join-Path $actualSourceDir '*') -File -Include *.jpg,*.jpeg,*.png,*.gif
-
-    # If there are no files to process
-    if ($files.Count -eq 0) {
-        if ($loopEnabled) {
-            $idleCount++
-            $currentMaxIdle = if ($hasSeenFiles) { $maxIdleCount } else { $maxIdleCountBeforeFirstFile }
-            if ($idleCount -ge $currentMaxIdle) {
-                Write-Output "No new files detected for a while. Exiting."
-                break
-            }
-            # Adaptive sleep: longer wait when idle
-            $sleepTime = [Math]::Min(3 + $idleCount, 10)
-            Start-Sleep -Seconds $sleepTime
-            $loopIteration++
-            continue
-        } else {
+        # Exit if the source directory was deleted while the script is running
+        if (-not (Test-Path $actualSourceDir -PathType Container)) {
+            Write-Output "Source directory no longer exists: $actualSourceDir. Exiting."
             break
         }
-    }
 
-    # Reset idle counter when files are found
-    $idleCount = 0
-    $hasSeenFiles = $true
-    $loopIteration++
+        # Initialize a hashtable to keep track of the number of files moved to each directory
+        $dirFileCount = @{}
 
-    foreach ($file in $files) {
-        $dirName  = $null
-        $sentinel = [char]0x1
+        # Get all image files in the directory
+        # Note: -Include requires a wildcard in -Path to work without -Recurse
+        $files = Get-ChildItem -Path (Join-Path $actualSourceDir '*') -File -Include *.jpg,*.jpeg,*.png,*.gif
 
-        # Best guess: the containing folder name is the subject name. When the file
-        # name references it, strip that subject portion (and the trailing index) and
-        # use the remaining title as the subfolder name.
-        # e.g. folder 'Subject A', file 'Some-Title_Subject-A_0124' -> 'Some Title'
-        if ($folderGuessValid -and $file.BaseName -match $folderTokenPattern) {
-            $title = $file.BaseName -replace $folderTokenPattern, ' '   # drop the subject name
-            $title = $title -replace '[_\s\-]*\d+$', ''          # drop the trailing index
-            $title = $title -replace '_', ' '                    # field separators -> space
-            # Decode dashes: runs of 2+ -> ' - ', single -> space
-            $title = $title -replace '-{2,}', $sentinel `
-                            -replace '-',     ' '       `
-                            -replace $sentinel, ' - '
-            $title = ($title -replace '\s+', ' ').Trim(" -")
-            if ($title -match "^[a-zA-Z0-9\s\._'\-]+$" -and $title.Length -gt 0) {
-                $dirName = $title
+        # If there are no files to process
+        if ($files.Count -eq 0) {
+            if ($loopEnabled) {
+                $idleCount++
+                $currentMaxIdle = if ($hasSeenFiles) { $maxIdleCount } else { $maxIdleCountBeforeFirstFile }
+                if ($idleCount -ge $currentMaxIdle) {
+                    Write-Output "No new files detected for a while. Exiting."
+                    break
+                }
+                # Adaptive sleep: longer wait when idle
+                $sleepTime = [Math]::Min(3 + $idleCount, 10)
+                Start-Sleep -Seconds $sleepTime
+                $loopIteration++
+                continue
+            } else {
+                break
             }
         }
 
-        foreach ($extractor in $extractors) {
-            if ($null -ne $dirName) { break }
+        # Reset idle counter when files are found
+        $idleCount = 0
+        $hasSeenFiles = $true
+        $loopIteration++
 
-            if ($file.BaseName -notmatch $extractor.P) { continue }
+        foreach ($file in $files) {
+            $dirName  = $null
+            $sentinel = [char]0x1
 
-            $candidate = $Matches[1].Trim()
-
-            if ($extractor.Decode) {
-                # Decode dashes: runs of 2+ → ' - ', single → space
-                $candidate = $candidate -replace '-{2,}', $sentinel `
-                                        -replace '-',     ' '       `
-                                        -replace $sentinel, ' - '
-                $candidate = ($candidate -replace '\s+', ' ').Trim()
-                # Priority pattern: first valid match wins
-                if ($candidate -match "^[a-zA-Z0-9\s\._'\-]+$" -and $candidate.Length -gt 0) {
-                    $dirName = $candidate
-                    break
+            # Best guess: the containing folder name is the subject name. When the file
+            # name references it, strip that subject portion (and the trailing index) and
+            # use the remaining title as the subfolder name.
+            # e.g. folder 'Subject A', file 'Some-Title_Subject-A_0124' -> 'Some Title'
+            # Skipped for cover images: they carry no title, so stripping the subject name
+            # would leave only the publisher prefix (e.g. folder 'Brit', file
+            # 'SexArt-Brit-cover-clean' -> 'SexArt'). The extractors below yield the subject.
+            $isCover = $file.BaseName -match '(?<![a-zA-Z0-9])cover(?![a-zA-Z])'
+            if ($folderGuessValid -and -not $isCover -and $file.BaseName -match $folderTokenPattern) {
+                $title = $file.BaseName -replace $folderTokenPattern, ' '   # drop the subject name
+                $title = $title -replace '[_\s\-]*\d+$', ''          # drop the trailing index
+                $title = $title -replace '_', ' '                    # field separators -> space
+                # Decode dashes: runs of 2+ -> ' - ', single -> space
+                $title = $title -replace '-{2,}', $sentinel `
+                                -replace '-',     ' '       `
+                                -replace $sentinel, ' - '
+                $title = ($title -replace '\s+', ' ').Trim(" -")
+                if ($title -match "^[a-zA-Z0-9\s\._'\-]+$" -and $title.Length -gt 0) {
+                    $dirName = $title
                 }
-            } else {
-                $candidate = ($candidate -replace '[&!]', '_' -replace '\.', ' ' -replace '\s+', ' ').Trim()
-                # Generic pattern: shortest valid match wins
-                if ($candidate -match "^[a-zA-Z0-9\s\._'\-]+$" -and $candidate.Length -gt 0) {
-                    if ($null -eq $dirName -or $candidate.Length -lt $dirName.Length) {
+            }
+
+            foreach ($extractor in $extractors) {
+                if ($null -ne $dirName) { break }
+
+                if ($file.BaseName -notmatch $extractor.P) { continue }
+
+                $candidate = $Matches[1].Trim()
+
+                if ($extractor.Decode) {
+                    # Decode dashes: runs of 2+ → ' - ', single → space
+                    $candidate = $candidate -replace '-{2,}', $sentinel `
+                                            -replace '-',     ' '       `
+                                            -replace $sentinel, ' - '
+                    $candidate = ($candidate -replace '\s+', ' ').Trim()
+                    # Priority pattern: first valid match wins
+                    if ($candidate -match "^[a-zA-Z0-9\s\._'\-]+$" -and $candidate.Length -gt 0) {
                         $dirName = $candidate
+                        break
+                    }
+                } else {
+                    $candidate = ($candidate -replace '[&!]', '_' -replace '\.', ' ' -replace '\s+', ' ').Trim()
+                    # Generic pattern: shortest valid match wins
+                    if ($candidate -match "^[a-zA-Z0-9\s\._'\-]+$" -and $candidate.Length -gt 0) {
+                        if ($null -eq $dirName -or $candidate.Length -lt $dirName.Length) {
+                            $dirName = $candidate
+                        }
                     }
                 }
             }
-        }
 
-        # If no directory name could be extracted, continue to the next file
-        if ($null -eq $dirName) {
-            continue
-        }
-
-        # Cover files belong with the gallery photos, not in a separate '<name> cover ...'
-        # folder. Strip the trailing 'cover' token and any qualifier (e.g. 'clean', 'wide',
-        # a number) so the file lands in the gallery directory:
-        #   'Sunset cover'      -> 'Sunset'
-        #   'BeachDay cover wide' -> 'BeachDay'
-        if ($dirName -match '\s+cover(\s.*|\d*)?$') {
-            $stripped = ($dirName -replace '\s+cover(\s.*|\d*)?$', '').Trim()
-            if ($stripped.Length -gt 0) {
-                $dirName = $stripped
-            }
-        }
-
-        # Capitalize the first letter of the folder name, even when the filename is
-        # lowercase (e.g. 'sunset' -> 'Sunset'). Leading non-letters are left as-is.
-        if ($dirName.Length -gt 0) {
-            $dirName = $dirName.Substring(0, 1).ToUpper() + $dirName.Substring(1)
-        }
-
-        # Validate directory name doesn't contain path separators or invalid characters
-        if ($dirName -match '[\\\/\:\*\?\"\<\>\|]|\.\.') {
-            Write-Warning "Skipped '$($file.Name)' - invalid directory name: '$dirName'"
-            continue
-        }
-
-        # Create the directory path
-        $dirPath = Join-Path -Path $actualSourceDir -ChildPath $dirName
-
-        # Create the directory if it doesn't exist and $move is true
-        if ($move -and !(Test-Path -Path $dirPath)) {
-            try {
-                New-Item -ItemType Directory -Path $dirPath -ErrorAction Stop | Out-Null
-                Write-Output "Created directory: $dirName"
-            }
-            catch {
-                Write-Warning "Failed to create directory '$dirName': $_"
+            # If no directory name could be extracted, continue to the next file
+            if ($null -eq $dirName) {
                 continue
             }
-        }
 
-        # Move the file to the new directory if $move is true
-        if ($move) {
-            try {
-                # Handle duplicate filenames by adding a counter
-                $destPath = Join-Path $dirPath $file.Name
-                $counter = 1
-                while (Test-Path $destPath) {
-                    $newName = "$($file.BaseName)_$counter$($file.Extension)"
-                    $destPath = Join-Path $dirPath $newName
-                    $counter++
-                }
-                
-                Move-Item -Path $file.FullName -Destination $destPath -ErrorAction Stop
-                
-                # Notify if file was renamed due to duplicate
-                if ($counter -gt 1) {
-                    Write-Output "Renamed '$($file.Name)' to '$(Split-Path $destPath -Leaf)' (duplicate)"
+            # Cover files belong with the gallery photos, not in a separate '<name> cover ...'
+            # folder. Strip the trailing 'cover' token and any qualifier (e.g. 'clean', 'wide',
+            # a number) so the file lands in the gallery directory:
+            #   'Sunset cover'      -> 'Sunset'
+            #   'BeachDay cover wide' -> 'BeachDay'
+            if ($dirName -match '\s+cover(\s.*|\d*)?$') {
+                $stripped = ($dirName -replace '\s+cover(\s.*|\d*)?$', '').Trim()
+                if ($stripped.Length -gt 0) {
+                    $dirName = $stripped
                 }
             }
-            catch {
-                Write-Warning "Failed to move '$($file.Name)': $_"
+
+            # Capitalize the first letter of the folder name, even when the filename is
+            # lowercase (e.g. 'sunset' -> 'Sunset'). Leading non-letters are left as-is.
+            if ($dirName.Length -gt 0) {
+                $dirName = $dirName.Substring(0, 1).ToUpper() + $dirName.Substring(1)
+            }
+
+            # Validate directory name doesn't contain path separators or invalid characters
+            if ($dirName -match '[\\\/\:\*\?\"\<\>\|]|\.\.') {
+                Write-Warning "Skipped '$($file.Name)' - invalid directory name: '$dirName'"
                 continue
             }
-        }
-        # else {
-        #     Write-Output ("Would move file '{0}' to directory '{1}'." -f $file.Name, $dirName)
-        # }
 
-        # Increment the count of files moved to the directory
-        $dirFileCount[$dirName] = ($dirFileCount[$dirName] ?? 0) + 1
-    }
+            # Create the directory path
+            $dirPath = Join-Path -Path $actualSourceDir -ChildPath $dirName
 
-    # Output the number of files processed to each directory
-    if ($dirFileCount.Count -gt 0) {
-        $action = if ($move) { "Moved" } else { "Would move" }
-        $dirFileCount.GetEnumerator() | ForEach-Object {
-            Write-Output ("{0} {1} file(s) to directory '{2}'" -f $action, $_.Value, $_.Key)
+            # Create the directory if it doesn't exist and $move is true
+            if ($move -and !(Test-Path -Path $dirPath)) {
+                try {
+                    New-Item -ItemType Directory -Path $dirPath -ErrorAction Stop | Out-Null
+                    Write-Output "Created directory: $dirName"
+                }
+                catch {
+                    Write-Warning "Failed to create directory '$dirName': $_"
+                    continue
+                }
+            }
+
+            # Move the file to the new directory if $move is true
+            if ($move) {
+                try {
+                    # Handle duplicate filenames by adding a counter
+                    $destPath = Join-Path $dirPath $file.Name
+                    $counter = 1
+                    while (Test-Path $destPath) {
+                        $newName = "$($file.BaseName)_$counter$($file.Extension)"
+                        $destPath = Join-Path $dirPath $newName
+                        $counter++
+                    }
+                
+                    Move-Item -Path $file.FullName -Destination $destPath -ErrorAction Stop
+                
+                    # Notify if file was renamed due to duplicate
+                    if ($counter -gt 1) {
+                        Write-Output "Renamed '$($file.Name)' to '$(Split-Path $destPath -Leaf)' (duplicate)"
+                    }
+                }
+                catch {
+                    Write-Warning "Failed to move '$($file.Name)': $_"
+                    continue
+                }
+            }
+            # else {
+            #     Write-Output ("Would move file '{0}' to directory '{1}'." -f $file.Name, $dirName)
+            # }
+
+            # Increment the count of files moved to the directory
+            $dirFileCount[$dirName] = ($dirFileCount[$dirName] ?? 0) + 1
         }
+
+        # Output the number of files processed to each directory
+        if ($dirFileCount.Count -gt 0) {
+            $action = if ($move) { "Moved" } else { "Would move" }
+            $dirFileCount.GetEnumerator() | ForEach-Object {
+                Write-Output ("{0} {1} file(s) to directory '{2}'" -f $action, $_.Value, $_.Key)
+            }
         
-        if ($loopEnabled) {
-            Write-Output "Waiting for new files... (Press Ctrl+C to exit)"
-            Start-Sleep -Seconds 3
+            if ($loopEnabled) {
+                Write-Output "Waiting for new files... (Press Ctrl+C to exit)"
+                Start-Sleep -Seconds 3
+            }
         }
-    }
 
-} while ($loopEnabled)
+    } while ($loopEnabled)
+}
+finally {
+    # Release the single-instance lock so a later run for this folder can start.
+    $mutex.ReleaseMutex()
+    $mutex.Dispose()
+}

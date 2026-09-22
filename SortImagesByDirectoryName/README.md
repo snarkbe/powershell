@@ -10,6 +10,7 @@ This script organizes image files in a directory based on their filenames. It's 
 - **Smart pattern matching** - Uses multiple regex patterns and selects the cleanest directory name.
 - Can operate in a "**dry run**" mode that shows what would be moved without actually moving anything.
 - **Smart loop mode** - Continuously monitors for new files with adaptive sleep intervals.
+- **Single instance per folder** - If another instance is already sorting the same folder (e.g. several downloads started at once), the new instance exits immediately.
 - **Duplicate file handling** - Automatically renames files when duplicates are detected.
 - **Error handling** - Robust try-catch blocks with clear error messages.
 - **Directory name validation** - Prevents invalid characters and path traversal attacks.
