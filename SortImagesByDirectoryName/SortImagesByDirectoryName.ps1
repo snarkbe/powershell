@@ -84,9 +84,8 @@ $extractors = @(
     # prefix-series_number
     @{ P = '^.+-([A-Za-z0-9 .-]+?)_';                                            Decode = $false },
     @{ P = '-([^_]+?)_';                                                          Decode = $false },
-    @{ P = '-([^_]+?)-';                                                          Decode = $false },
-    # Publisher.YYYY.MM.DD.Author.Content_NNNN
-    @{ P = '^\w+\.\d{4}\.\d{2}\.\d{2}\.\w+\.(.+?)_\d+$';               Decode = $false }
+    @{ P = '-([^_]+?)-';                                                          Decode = $false }
+    # Publisher.YYYY.MM.DD.Subject.Title_NNNN is handled before the folder-name hint (see the loop)
 )
 
 # The containing folder name is often the best hint for the subject name.
@@ -181,11 +180,24 @@ try {
             # use the remaining title as the subfolder name.
             # e.g. folder 'Subject A', file 'Some-Title_Subject-A_0124' -> 'Some Title'
             # Skipped for cover images: they carry no title, so stripping the subject name
-            # would leave only the publisher prefix (e.g. folder 'Brit', file
-            # 'SexArt-Brit-cover-clean' -> 'SexArt'). The extractors below yield the subject.
+            # would leave only the publisher prefix (e.g. folder 'Subject', file
+            # 'Publisher-Subject-cover-clean' -> 'Publisher'). The extractors below yield the subject.
             $isCover = $file.BaseName -match '(?<![a-zA-Z0-9])cover(?![a-zA-Z])'
-            if ($folderGuessValid -and -not $isCover -and $file.BaseName -match $folderTokenPattern) {
-                $title = $file.BaseName -replace $folderTokenPattern, ' '   # drop the subject name
+            # A trailing 'Foto' marks the album's cover photo, in place of the index: parse it as
+            # index 0 so it lands with the gallery ('Model-Title Foto' -> same folder as 'Model-Title 041')
+            $parseName = $file.BaseName -replace '(?i)([\s_\-])foto$', '${1}0'
+            # Publisher.YYYY.MM.DD.Subject.Title_NNNN: the title is unambiguous. Checked before the
+            # folder-name hint, which would only strip the subject and keep the publisher and date
+            # (folder 'Subject', 'Publisher.2026.05.02.Subject.Some.Title_0094' -> 'Some Title').
+            if ($parseName -match '^\w+\.\d{4}\.\d{2}\.\d{2}\.\w+\.(.+?)_\d+$') {
+                $candidate = ($Matches[1] -replace '[&!]', '_' -replace '\.', ' ' -replace '\s+', ' ').Trim()
+                if ($candidate -match "^[a-zA-Z0-9\s\._'\-]+$" -and $candidate.Length -gt 0) {
+                    $dirName = $candidate
+                }
+            }
+
+            if ($null -eq $dirName -and $folderGuessValid -and -not $isCover -and $parseName -match $folderTokenPattern) {
+                $title = $parseName -replace $folderTokenPattern, ' '   # drop the subject name
                 $title = $title -replace '[_\s\-]*\d+$', ''          # drop the trailing index
                 $title = $title -replace '_', ' '                    # field separators -> space
                 # Decode dashes: runs of 2+ -> ' - ', single -> space
@@ -201,7 +213,7 @@ try {
             foreach ($extractor in $extractors) {
                 if ($null -ne $dirName) { break }
 
-                if ($file.BaseName -notmatch $extractor.P) { continue }
+                if ($parseName -notmatch $extractor.P) { continue }
 
                 $candidate = $Matches[1].Trim()
 
