@@ -186,6 +186,9 @@ try {
             # A trailing 'Foto' marks the album's cover photo, in place of the index: parse it as
             # index 0 so it lands with the gallery ('Model-Title Foto' -> same folder as 'Model-Title 041')
             $parseName = $file.BaseName -replace '(?i)([\s_\-])foto$', '${1}0'
+            # A size tag after the index hides it from the index stripping, so every file would get
+            # its own folder ('Subject-1234-001-lg' -> '1234 001 lg'). Drop it ('Subject-1234-001' -> '1234').
+            $parseName = $parseName -replace '(?i)(?<=\d)[\s_\-](?:lg|sm|md|xl|xxl|large|small|med|medium|hires|hq|lq)$', ''
             # Publisher.YYYY.MM.DD.Subject.Title_NNNN: the title is unambiguous. Checked before the
             # folder-name hint, which would only strip the subject and keep the publisher and date
             # (folder 'Subject', 'Publisher.2026.05.02.Subject.Some.Title_0094' -> 'Some Title').
