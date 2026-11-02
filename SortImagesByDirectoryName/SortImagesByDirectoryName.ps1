@@ -171,6 +171,12 @@ try {
         $hasSeenFiles = $true
         $loopIteration++
 
+        # Gallery folders known so far: existing subfolders plus those derived from numbered files
+        # in this pass. Numbered files are processed first so unindexed extras can join them.
+        $knownDirs = [System.Collections.Generic.List[string]]::new()
+        Get-ChildItem -LiteralPath $actualSourceDir -Directory | ForEach-Object { $knownDirs.Add($_.Name) }
+        $files = @($files | Sort-Object { $_.BaseName -notmatch '\d+\)?$' }, Name)
+
         foreach ($file in $files) {
             $dirName  = $null
             $sentinel = [char]0x1
@@ -199,9 +205,14 @@ try {
                 }
             }
 
-            if ($null -eq $dirName -and $folderGuessValid -and -not $isCover -and $parseName -match $folderTokenPattern) {
+            # A cover is safe here when the subject name leads ('Subject - Title cover' -> 'Title').
+            if ($null -eq $dirName -and $folderGuessValid -and $parseName -match $folderTokenPattern -and
+                (-not $isCover -or $parseName -match "^$folderTokenPattern")) {
                 $title = $parseName -replace $folderTokenPattern, ' '   # drop the subject name
                 $title = $title -replace '[_\s\-]*\d+$', ''          # drop the trailing index
+                if ($isCover) {
+                    $title = $title -replace '(?i)(?<![a-zA-Z0-9])cover(?![a-zA-Z]).*$', ''   # drop 'cover' and qualifiers
+                }
                 $title = $title -replace '_', ' '                    # field separators -> space
                 # Decode dashes: runs of 2+ -> ' - ', single -> space
                 $title = $title -replace '-{2,}', $sentinel `
@@ -257,6 +268,19 @@ try {
                 if ($stripped.Length -gt 0) {
                     $dirName = $stripped
                 }
+            }
+
+            # Extras without an index (e.g. 'Title square', 'Title wide') belong with the gallery
+            # whose name prefixes theirs; numbered files define the galleries, so they come first.
+            $isIndexed = $parseName -match '\d+\)?$'
+            if (-not $isIndexed) {
+                $gallery = $knownDirs |
+                    Where-Object { $dirName.StartsWith("$_ ", [System.StringComparison]::OrdinalIgnoreCase) } |
+                    Sort-Object Length -Descending | Select-Object -First 1
+                if ($gallery) { $dirName = $gallery }
+            }
+            elseif ($knownDirs -notcontains $dirName) {
+                $knownDirs.Add($dirName)
             }
 
             # Capitalize the first letter of the folder name, even when the filename is
