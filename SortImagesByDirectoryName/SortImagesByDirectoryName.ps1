@@ -208,7 +208,20 @@ try {
             # A cover is safe here when the subject name leads ('Subject - Title cover' -> 'Title').
             if ($null -eq $dirName -and $folderGuessValid -and $parseName -match $folderTokenPattern -and
                 (-not $isCover -or $parseName -match "^$folderTokenPattern")) {
-                $title = $parseName -replace $folderTokenPattern, ' '   # drop the subject name
+                $title = $parseName
+                # Co-subjects share the subject's underscore field ('Some-Title_Other-Subject_0001'):
+                # drop that whole field when the title lives in another one, or the co-subject name
+                # would leak into the folder name ('Some Title Other').
+                $fields = $title -split '_'
+                if ($fields.Count -ge 3) {
+                    $coField = "^(?:[A-Z][a-z0-9]+[-&+]){0,2}(?i:$folderToken)(?:[-&+][A-Z][a-z0-9]+){0,2}$"
+                    $rest    = @($fields | Where-Object { $_ -cnotmatch $coField })
+                    if ($rest.Count -lt $fields.Count -and
+                        ($rest -join '_') -replace '[_\s\-]*\d+$', '' -match '[a-zA-Z]') {
+                        $title = ($fields | ForEach-Object { if ($_ -cmatch $coField) { ' ' } else { $_ } }) -join '_'
+                    }
+                }
+                $title = $title -replace $folderTokenPattern, ' '      # drop the subject name
                 $title = $title -replace '[_\s\-]*\d+$', ''          # drop the trailing index
                 if ($isCover) {
                     $title = $title -replace '(?i)(?<![a-zA-Z0-9])cover(?![a-zA-Z]).*$', ''   # drop 'cover' and qualifiers
@@ -277,6 +290,14 @@ try {
                 $gallery = $knownDirs |
                     Where-Object { $dirName.StartsWith("$_ ", [System.StringComparison]::OrdinalIgnoreCase) } |
                     Sort-Object Length -Descending | Select-Object -First 1
+                if (-not $gallery) {
+                    # Otherwise, a gallery whose name appears whole in the file name, e.g. a cover
+                    # with a publisher prefix: '_Publisher-Some-Title-cover' -> 'Some Title'.
+                    $plainName = " $(($parseName -replace '[_\s\-\.]+', ' ').Trim()) "
+                    $gallery = $knownDirs |
+                        Where-Object { $plainName.IndexOf(" $_ ", [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+                        Sort-Object Length -Descending | Select-Object -First 1
+                }
                 if ($gallery) { $dirName = $gallery }
             }
             elseif ($knownDirs -notcontains $dirName) {
